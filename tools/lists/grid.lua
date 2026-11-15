@@ -294,8 +294,11 @@ do
     e.draw = {mag = true}
     KnoxGridView.checkMags(e)
     check("Shift again: nothing to read anew", e.draw ~= nil)
-    check("one magazine: rounds / room", KnoxGridView.magRounds({items = {m1}}) == "7/15", KnoxGridView.magRounds({items = {m1}}))
-    check("a stack: all of them", KnoxGridView.magRounds(e) == "22/30", KnoxGridView.magRounds(e))
+    -- (two numbers since the count's plate, 2026-11-14)
+    local n1, c1 = KnoxGridView.magRounds({items = {m1}})
+    check("one magazine: rounds / room", n1 == 7 and c1 == 15, tostring(n1) .. "/" .. tostring(c1))
+    local n2, c2 = KnoxGridView.magRounds(e)
+    check("a stack: all of them", n2 == 22 and c2 == 30, tostring(n2) .. "/" .. tostring(c2))
     KnoxMagKnown = nil
 end
 

@@ -88,7 +88,7 @@ local function strings()
            swap = tx("Swap"), insert = tx("Insert"), load = tx("Load"), unload = tx("Unload"), use = tx("Use"),
            eject = tx("Eject"), bolt = tx("RackBolt"), pump = tx("RackPump"), unjam = tx("Unjam"),
            noGun = tx("NoWeapon"), magsRounds = tx("MagsRounds"), open = tx("Open"), rounds = tx("Rounds"),
-           loadAll = tx("LoadAll")}
+           loadAll = tx("LoadAll"), openAll = tx("OpenAll")}
     return STR
 end
 
@@ -181,9 +181,10 @@ end
 --- them, with one those of its rounds.
 local function boxRows(player, gun, rows)
     M.boxTypes = L.boxTypes(gun)
-    local found = {}
+    local found, all = {}, {}
     for _, ft in ipairs(M.boxTypes) do
         local got = player:getInventory():getAllTypeRecurse(ft)
+        for i = 0, got:size() - 1 do table.insert(all, got:get(i)) end
         if got:size() > 0 then
             local box = got:get(0)
             local name = box:getDisplayName()
@@ -193,6 +194,13 @@ local function boxRows(player, gun, rows)
     end
     table.sort(found, function(a, b) return a.name < b.name end)
     for _, r in ipairs(found) do table.insert(rows, r) end
+    -- (all of them at once, two or more: the author 2026-11-14 - "пункт который открывает все
+    -- пачки патронов"; under the boxes' rows)
+    if #all > 1 then
+        local r = newRow("openall", all[1], strings().openAll .. " x" .. #all)
+        r.boxes = all
+        table.insert(rows, r)
+    end
 end
 
 --- Can any of them take rounds that are carried? (All but those known to be full; rounds of
@@ -698,8 +706,9 @@ function M.load(item, round)
         diff(player, item, round)
         return true
     end
-    if not isGun then ISInventoryPaneContextMenu.transferIfNeeded(player, item) end
-    local count = ISInventoryPaneContextMenu.transferBullets(player, key, blind and 0 or n, blind and 1 or cap)
+    -- (out of a bag at once, no progress bar: the author 2026-11-14, L.toMain)
+    if not isGun then L.toMain(player, item) end
+    local count = L.bringRounds(player, key, blind and 0 or n, blind and 1 or cap)
     if count <= 0 then return false end
     M.job = item
     if isGun then
@@ -724,7 +733,7 @@ function M.unload(item)
     if isGun then
         ISTimedActionQueue.add(ISUnloadBulletsFromFirearm:new(player, item))
     else
-        ISInventoryPaneContextMenu.transferIfNeeded(player, item)
+        L.toMain(player, item)
         ISTimedActionQueue.add(ISUnloadBulletsFromMagazine:new(player, item))
     end
     return true
@@ -754,10 +763,10 @@ function M.loadAll(mags)
     if #plan == 0 then return false end
     clearBusy(player)
     for key, count in pairs(bring) do
-        ISInventoryPaneContextMenu.transferBullets(player, key, 0, count)
+        L.bringRounds(player, key, 0, count)
     end
     for _, p in ipairs(plan) do
-        ISInventoryPaneContextMenu.transferIfNeeded(player, p.mag)
+        L.toMain(player, p.mag)
         L.queueLoad(player, p.mag, p.count, p.key)
     end
     M.job = plan[#plan].mag   -- (the menu may come up over the whole of it: M.jobQueued)
@@ -787,6 +796,16 @@ function M.lmb()
         end
         clearBusy(player)
         L.openBox(player, r.item)
+    elseif r.kind == "openall" then
+        -- (one after another in the queue; pressed again while at it: not begun anew)
+        local q = queueOf(player)
+        for i = 1, q and #q or 0 do
+            if opensBox(q[i]) then return end
+        end
+        clearBusy(player)
+        for _, box in ipairs(r.boxes) do
+            if box:getContainer() then L.openBox(player, box) end
+        end
     elseif r.kind == "swap" or r.kind == "insert" then
         clearBusy(player)
         L.insertMagazine(player, gun, r.m)
@@ -985,7 +1004,7 @@ local palmTex = nil
 local function drawHead(ui, ox, oy, W, a)
     local C = T.color
     local hx, hy, hw, ph = ox + Z.GAP, oy + Z.GAP, W - 2 * Z.GAP, Z.PH
-    T.rect(ui, hx, hy, hw, ph, C.header, a)
+    T.glowRect(ui, hx, hy, hw, ph, C.header, a, 2)   -- (glowing, as the tooltip's header - the author 2026-11-14)
     T.tileFrame(ui, hx, hy, hw, ph, C.tileFrame, a)
     local cx, cy, cell = hx + Z.M, hy + Z.M, ph - 2 * Z.M
     T.rect(ui, cx, cy, cell, cell, C.cell, a)
@@ -1041,7 +1060,7 @@ local function drawRow(ui, r, ox, y, W, chosen, a)
     local is = Z.IC + math.floor(Z.GROW_CELL * g + 0.5)
     local tx0 = ox + Z.L + math.floor((Z.CELL - cs) / 2)
     local ty0 = y + math.floor((h - cs) / 2)
-    T.rect(ui, tx0, ty0, cs, cs, r.cat, a)
+    T.glowRect(ui, tx0, ty0, cs, cs, r.cat, a, 1)   -- (the category's glow, as a tile's - the author 2026-11-14)
     picture(ui, r.tex, r.ink, tx0 + math.floor((cs - is) / 2), ty0 + math.floor((cs - is) / 2), is, a)
     T.border(ui, tx0, ty0, cs, cs, r.edge, a)
     -- its name, a size up when chosen
@@ -1082,7 +1101,7 @@ local function chooseHints(now)
         elseif r.kind == "bag" then lmb, noAct = s.swap, true
         elseif r.kind == "self" then lmb, noAct = s.load, not M.canLoad(r)
         elseif r.kind == "all" then lmb = s.load
-        elseif r.kind == "box" then lmb = s.open
+        elseif r.kind == "box" or r.kind == "openall" then lmb = s.open
         elseif r.kind == "rack" or r.kind == "unjam" then noAct = not M.canRack
         end
     end
@@ -1188,7 +1207,7 @@ local function draw(ui, now)
         local sy = oy + M.footY - Z.GAP - Z.ROUNDS
         T.rect(ui, ox + Z.L, sy - Z.GAP - 1, W - 2 * Z.L, 1, C.border, a)
         local tx0, ty0 = ox + Z.L, sy + math.floor((Z.ROUNDS - Z.CELL) / 2)
-        T.rect(ui, tx0, ty0, Z.CELL, Z.CELL, b.cat, a)
+        T.glowRect(ui, tx0, ty0, Z.CELL, Z.CELL, b.cat, a, 1)
         picture(ui, b.tex, b.ink, tx0 + math.floor((Z.CELL - Z.IC) / 2), ty0 + math.floor((Z.CELL - Z.IC) / 2), Z.IC, a)
         T.border(ui, tx0, ty0, Z.CELL, Z.CELL, b.edge, a)
         label(ui, strings().rounds, ox + Z.TX, sy, W - Z.TX, Z.ROUNDS, C.text, T.fontText, a)
@@ -1222,6 +1241,7 @@ local function readJob(player)
     local box = a and a.action and a.Type == "ISHandcraftAction"
     for _, r in ipairs(M.rows) do
         local on = (r.m and r.m == item and (not r.round or r.round == M.jobRound)) or (box and r.kind == "box" and opensBox(a, r.item:getFullType()))
+            or (box and r.kind == "openall" and opensBox(a))
         if on and KnoxGrid.useDelta then
             local d = KnoxGrid.useDelta(a)
             local out = JOB_OUT[a.Type] == true

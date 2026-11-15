@@ -572,6 +572,23 @@ function KnoxInspectWindow.open(item, playerNum)
     KnoxInspectWindow.active = w
 end
 
+--- The inspect key (the middle button): a brochure, a flier, a photo - anything the game shows a
+--- picture of (its modData.printMedia) - opens that picture, as the menu's "Рассмотреть" (the author
+--- 2026-11-13); too dark to look - the game's words over the head; anything else - Knox's window.
+function KnoxInspectWindow.openFor(item, playerNum)
+    local P = ISInventoryPaneContextMenu
+    local player = getSpecificPlayer(playerNum)
+    if item and player and P and P.onLiteratureItems and item:hasModData() and item:getModData().printMedia then
+        if player:tooDarkToRead() then
+            if HaloTextHelper and HaloTextHelper.addBadText then HaloTextHelper.addBadText(player, getText("ContextMenu_TooDarkToInspect")) end
+        else
+            P.onLiteratureItems({item}, playerNum)
+        end
+        return
+    end
+    KnoxInspectWindow.open(item, playerNum)
+end
+
 -- "Inspect" on top of every item context menu (opens the Knox screen first
 -- when it is closed, e.g. a menu from the world).
 local function onFillMenu(playerNum, context, items)
@@ -591,6 +608,17 @@ local function onFillMenu(playerNum, context, items)
     local fn = ISInventoryPaneContextMenu and ISInventoryPaneContextMenu.onInspectClothing
     for _, o in ipairs(fn and context.options or {}) do
         if o.onSelect == fn then o.name = getText("IGUI_Knox_InspectClothing") end
+    end
+    -- And its "Inspect" of a brochure, a flier, a photo - the window with the picture
+    -- (the author 2026-11-13: "Рассмотреть"); also its greyed one when too dark to look.
+    local P = ISInventoryPaneContextMenu
+    local lit, inspect = P and P.onLiteratureItems, getText("ContextMenu_Inspect")
+    local dark = getText("ContextMenu_TooDarkToInspect")
+    for _, o in ipairs(lit and context.options or {}) do
+        if o.name == inspect and (o.onSelect == lit
+                or (o.onSelect == nil and o.toolTip and o.toolTip.description == dark)) then
+            o.name = getText("IGUI_Knox_InspectPicture")
+        end
     end
 end
 

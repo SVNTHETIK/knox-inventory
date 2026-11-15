@@ -36,6 +36,9 @@ H.homes = H.homes or {}   -- item -> true: things with a place in a bag to go ba
 H.notOn = setmetatable({}, {__mode = "k"})   -- item -> the key of a bag found not on the character
 H.CHECK_MS = 150          -- after an action, a hand or clothes: the game's own state settles first
 H.BUSY_MS = 250           -- the queue still busy: looked at again so often
+-- item -> true: put away out of both hands by a hotbar key (KnoxHotbarSwap) - it goes back
+-- to its bag at once, no transfer time (the author 2026-11-14)
+H.fast = H.fast or setmetatable({}, {__mode = "k"})
 
 local function on()
     return T.on("inventory") and T.switch("home")
@@ -289,7 +292,8 @@ local function goBack(player, items, hp)
     local r = hp.r == 1 and 1 or 0
     local dw, dh = KnoxGrid.dims(e, r)
     local x, y
-    if hp.y + dh <= (L.baseRows or L.rows) and L:fits(hp.x, hp.y, dw, dh) then
+    -- (no limit: its place may be under the grid's rows now - the grid grows back to it)
+    if (L.free or hp.y + dh <= (L.baseRows or L.rows)) and L:fits(hp.x, hp.y, dw, dh) then
         x, y = hp.x, hp.y
         KnoxDrag.ownTile(e)
     else
@@ -309,6 +313,10 @@ local function goBack(player, items, hp)
         return
     end
     local source = #items == 1 and sourceIn(first, player:getInventory()) or nil
+    if H.fast[first] then
+        H.fast[first] = nil
+        e.fast = true
+    end
     -- (the move writes where it goes: the home is forgotten with it - KnoxGrid.writePending)
     KnoxDrag.moveTo(player, e, source, L, x, y, r)
     for _, it in ipairs(items) do H.homes[it] = nil end

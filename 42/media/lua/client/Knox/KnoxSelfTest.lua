@@ -687,6 +687,18 @@ local HEALTH_TEXTS = {"State", "Body", "Damage", "Kit", "Stats", "Effects", "All
     "RemoveGlassFirst", "Risk", "VitalPulse", "VitalBP", "VitalBlood", "Stat_temperature",
     "Health", "Worsening", "Improving", "FineMore", "Important", "HealingNow", "Path", "Needs", "Have", "HaveNone", "BtnBack", "BtnTreat", "BtnUrgent", "AllGood", "AllGoodSub", "JustHeals", "Do_ChangeBandage", "Do_Menu", "St_Bleeding", "St_Bandaged", "St_Open", "St_Stitched", "St_Cleaned", "St_Broken", "St_Splinted", "St_Lodged", "St_Removed", "St_Infected", "St_Disinfected", "St_Healed", "St_CanRemove", "St_Dirty", "Need_ContextMenu_Bandage", "Need_ContextMenu_Disinfect", "Need_ContextMenu_Stitch", "Need_ContextMenu_Remove_Glass", "Need_ContextMenu_Remove_Bullet", "Need_ContextMenu_Splint", "Need_ContextMenu_Clean_Burn", "Need_ContextMenu_PlantainCataplasm", "Need_ContextMenu_ComfreyCataplasm", "Need_ContextMenu_GarlicCataplasm"}
 
+local HEALTH_TEXTS_V3 = {"Organism", "WhoDay", "OfHundred", "Pulse", "TrendWorse", "TrendBleed", "TrendSlow",
+    "TrendInfect", "TrendBetter", "TrendClosed", "TrendOpen", "TrendFine", "TrendNoWounds", "LossAll", "LossNone",
+    "LossPart", "Level", "FirstAid", "HoverPart", "OnTable", "OneWound", "DepthIs", "PartHp", "ToTable", "QuickShort",
+    "AllWounds", "DepthLine", "HealLine", "HealIn", "HealClosed", "HealUnknown", "HealFracture", "BtnAll", "BtnNothing", "QuickAll",
+    "QuickGames", "QuickSome", "QuickNone", "StepReady", "StepHands", "StepNone", "StepPlaying", "StepDoing",
+    "StepSkipped", "ListTitle", "ListNote", "Next", "NothingToDo", "HaveIt", "ToTableGo", "NoWoundsTitle",
+    "NoWoundsSub", "KitNote", "HowTitle", "HowText1", "HowText2", "HowText3", "HowText4", "InPockets", "InChain",
+    "Take", "Helps", "Later", "NothingNow", "HintTable", "HintActions", "KeyRmbDrag", "HintRotate", "KeyEsc",
+    "HintCancel", "GameReady", "GameTime", "GameTimeOf", "GameSlips", "GameIdle", "GameIdleMp", "ShakeYes", "ShakeNo",
+    "FirstAidLvl", "CardNone", "Decimal", "HowClean", "HowStitch", "HowBandage", "HowBandage1", "HowBandage2",
+    "HowUnb", "HowTw", "HowSplint", "HowSplint2", "HowUnstitch", "HowUnsplint"}
+
 steps[#steps + 1] = function(p)
     if not (T.on and T.on("health") and KnoxHealthPanel) then return skip("health tab", "health module off") end
     local H, Care, Model = KnoxHealthData, KnoxHealthCare, KnoxHealthModel
@@ -745,6 +757,18 @@ steps[#steps + 1] = function(p)
     for _, s in ipairs(H.STATS) do
         if not getTextOrNull("IGUI_KnoxHP_Stat_" .. s.id) then table.insert(noText, "Stat_" .. s.id) end
     end
+    -- (the tab of the mockup health_v3, 2026-11-10)
+    for _, key in ipairs(HEALTH_TEXTS_V3) do
+        if not getTextOrNull("IGUI_KnoxHP_" .. key) then table.insert(noText, key) end
+    end
+    for _, id in ipairs(KnoxHealthWounds.STEPS) do
+        for _, pre in ipairs({"Step_", "StepDone_"}) do
+            if not getTextOrNull("IGUI_KnoxHP_" .. pre .. id) then table.insert(noText, pre .. id) end
+        end
+    end
+    for _, g in ipairs(KnoxHealthWounds.GROUPS) do
+        if not getTextOrNull("IGUI_KnoxHP_G_" .. g) then table.insert(noText, "G_" .. g) end
+    end
     check("health: its texts", #noText == 0, table.concat(noText, ","))
     -- every reading of the body, on this character as it is
     local ok, err = pcall(function()
@@ -774,20 +798,33 @@ steps[#steps + 1] = function(p)
         local av = {}
         Model.layers(av, p, {hover = "head", selected = "larm", glow = {[0] = true, [6] = true}})
         Model.layers(av, p, {})
-        -- the wounds (the redesigned tab's badges and rows) and what each needs
-        for _, w in ipairs(KnoxHealthWounds.list(p, function(bp) return Care.quickTreat(p, bp, true) end)) do
-            KnoxHealthWounds.needs(p, w)
+        -- the table's records (the tab of the mockup health_v3, 2026-11-10): each part's steps,
+        -- what each would take, the kit's groups
+        local items = Care.reachable(p)
+        for _, r in ipairs(KnoxHealthWounds.parts(p)) do
+            for _, s in ipairs(r.steps) do
+                Care.stepItem(items, s.id)
+                Care.stepCan(items, r.bp, s.id)
+            end
         end
+        for _, g in ipairs(Care.kit(p)) do
+            KnoxHealthWounds.groupOf(g.item)
+            KnoxHealthWounds.descKey(g.item)
+        end
+        -- the table's light on the model, twice (the colours ease)
+        local av2 = {}
+        Model.tableLayers(av2, p, {looks = {}, hoverPart = 3, selectedPart = 3, glow = {[0] = true}})
+        Model.tableLayers(av2, p, {looks = {}})
     end)
     check("health: reading the body", ok, tostring(err))
-    -- the wound icons (Knox Inventory Java/tools/healthpaint/IconGen.java)
-    local noWIcon = {}
-    for _, name in ipairs({"bleeding", "scratch", "cut", "deepwound", "bite", "glass", "bullet", "burn", "fracture",
-                           "infected", "destroyed", "other", "healed", "o_band", "o_dirty", "o_stitch", "o_splint",
-                           "o_clean", "o_removed", "o_poultice", "o_heal"}) do
-        if not KnoxHealthWounds.icon(name) then table.insert(noWIcon, name) end
+    -- the pictures and the mini-games (Java KnoxWoundCanvas, jar 154): there unless on a Mac
+    if knoxWoundOk then
+        check("health: the wound pictures", knoxWoundScene ~= nil and knoxWoundTex ~= nil and knoxWoundTexts ~= nil
+            and knoxWoundGameStart ~= nil and knoxActionMaxTime ~= nil, "a part of KnoxWoundCanvas missing")
+        if not knoxWoundOk() then info("health: no wound pictures on this system (a Mac) - plain boxes, no mini-games") end
+    else
+        info("health: the wound pictures not in this Java part (v" .. tostring(knoxJavaVersion and knoxJavaVersion()) .. ")")
     end
-    check("health: the wound icons", #noWIcon == 0, table.concat(noWIcon, ","))
     -- a body part's menu: the titled header, as the world's
     if T.on("menus") and KnoxContextMenu and KnoxContextMenu.setTitle and T.javaFonts then
         local menu = getPlayerContextMenu(p:getPlayerNum())

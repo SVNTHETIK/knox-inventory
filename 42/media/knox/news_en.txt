@@ -27,6 +27,9 @@
 ;   @back blizzard                       - a drawn backdrop: the blizzard (update 11)
 ;   @inv                                 - the live inventory grid on real things (main menu only, KnoxNewsLive)
 ;   @rmenu                               - a key plate: holding it opens the real menu on R (main menu only)
+;   @free                                - a live grid with no limit: a backpack with its hatching and the floor by it (main menu only)
+;   @parts                               - a live grid of guns with parts on them (main menu only)
+;   @back gear                           - a drawn backdrop: the grid and a gear, alive while the live grids are used (update 12)
 ;   @menu text                           - a paragraph for the main menu only (about the live blocks); not in the in-game list
 ;   ~~~~~~~~ or ~~~~~~~~~~~~~            - a place scribbled out by pen in a list item (58 or 96 px, no words under it)
 ;   @road date | version | title | text | preview | post
@@ -35,6 +38,64 @@
 ;   plain text                          - a paragraph; an empty line starts a new one
 ;   ; ...                               - a comment, not shown in game
 ; A post counts as read by its version, date and title: change them and it shows as new again.
+
+# | 15.11.2026 | tech | No Limit
+@back gear
+@pinstyle
+@art u12_art_en.png
+@boosty
+
+A pharmacy on the edge of Muldraugh. The backpack is barely half full by weight, yet there's not a single free cell left in the grid. The last bottle of painkillers stayed on the shelf: strength to carry it - yes, room - no. Now you can switch this Tetris off. And while I was at it, the update brings a new weapon reloading system, the Swap It system and new tile highlighting.
+
+## Important
+! The mod's Java part is updated. When ZombieBuddy asks about KnoxInventoryJava.jar, answer "Allow", or the new things won't work.
+
+## Grid Without Limit
+@free
+@menu Try it right here: this is a live demo. Drag things from the floor into the backpack's hatching, lay them out any old way and press "Compact" - the up arrow in the backpack's header.
+
++ The inventory now has two modes: the familiar Tetris and "Grid without limit". The switch is in the Knox settings, on the "Game" page. Tetris stays the default.
++ In the new mode the grid has no bottom: it grows down row by row as you put things in. Only weight limits it, by the game's own rules.
++ Under the things there's hatching. Put a thing there and the grid grows under it. Hold a big thing over it and the grid stretches before you even let go.
++ The "Compact" button next to "Sort" lifts things up and closes the gaps.
++ Works in every container, pockets included. No compartments: every bag has one plain grid.
++ A bag in a bag grows by weight: small when empty, big when full.
+* Back to Tetris - nothing gets lost: what doesn't fit waits in red rows under the grid. A friend in multiplayer who plays Tetris sees them there too.
+
+## Weapons, Magazines and Ammo
+@parts
+@menu This is a live demo too. Hover over the small cell in the corner of a weapon - the part's tooltip shows up; click it - the part comes off. Drag it onto a weapon: what goes where is up to the game's rules. The laser, say, fits the M16 and the pistol, but not the MSR788.
+
++ Parts right on the weapon: scopes, lasers, slings and the rest are small cells in the corner of the weapon's tile and of the back and hand slots. Hover to see a part, click to take it off. Drag a part onto a weapon to put it on. Instantly, no fiddling with a screwdriver.
+* Faster reloading: magazines and rounds from bags you wear are now taken out and put away instantly.
+* A magazine taken out of a weapon goes back to the bag it came from.
+* A magazine checked with Shift shows its rounds on the tile until the first shot.
++ The R menu: "Open All Boxes" when you have two or more boxes of rounds.
+
+## Swap It
++ Swapping items: press a slot's key - its item goes to your hands, and what was in your main hand goes onto your back.
+* Shotgun in both hands, axe on your back, you switch to the belt slot: the shotgun goes onto your back, the axe into the bag, the hammer into your hand. Press the back key - the shotgun comes back and the axe hangs on your back again.
++ A new "Both hands" slot in the equipment column: a two-handed weapon is seen whole in it. Drop a thing on it to take it in both hands.
+* Quick slots in the inventory: an empty one shows a faint picture of what fills it. They are rearranged with Alt, like the hotbar outside the inventory.
+
+## Gradient
+* Tiles glow in their category's colour, brighter towards the middle: in bags, on the hotbar, in equipment slots, in the finds window and in the Viewpoint crosshair panel. The headers of tooltips and right-click menus too. Frozen, cooked, hot and cold change the colour itself.
+* A new count plate on stacks and magazines, in the tile's corner. An empty magazine shows a red 0.
+* Rigid containers - toolboxes, first aid kits, cases, coolers, boxes - don't grow from the things inside. Soft bags grow as before.
+* 33 menu icons redrawn.
+
+## Keys, Cars and Viewpoint
++ Shift + click on a key in someone else's key ring puts it on your key ring.
++ A car key on a key ring in your backpack works: ignition, doors, locks. Taken out of the ignition, it goes back where it was. Single player only.
++ The Viewpoint crosshair panel: a "Crosshair panel size" setting (Settings > Game, 60-160%), a "Key on hand" line at car doors, an "Empty" icon.
+* Brochures, flyers, photos: the second "Inspect" is now "Look closer", the middle mouse button opens the picture.
+* A mixed stack's list opens with Shift.
+* Your own music from a car is heard four times farther outside, and gets louder as you come closer.
+* Spongie Open Jackets: an unbuttoned jacket goes into the torso slot, not "Other".
+
+## Fixed
+- A shoulder holster with a shotgun and no bandolier broke reloading
+- The Viewpoint crosshair panel no longer vanishes after an error: it comes back in a second.
 
 # | 05.11.2026 | update | Winter Is Coming
 @frame #8ec5e0

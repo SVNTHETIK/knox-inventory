@@ -340,6 +340,12 @@ local function layout(post, width)
                 local last = blocks[#blocks]
                 if last and last.kind == "heading" then last.framed = true end
                 table.insert(blocks, {kind = "inv"})
+            elseif string.match(s, "^@free") or string.match(s, "^@parts") then
+                -- update 12's live grids (KnoxNewsLive.hostBlock): "@free" - a backpack with no
+                -- limit and the floor, "@parts" - guns with their parts; a section opened by them
+                local last = blocks[#blocks]
+                if last and last.kind == "heading" then last.framed = true end
+                table.insert(blocks, {kind = "live", world = string.match(s, "^@(%a+)")})
             elseif string.match(s, "^@rmenu") then
                 -- the menu on R itself: held, it comes up here (KnoxNewsLive)
                 table.insert(blocks, {kind = "rmenu"})
@@ -562,6 +568,8 @@ function R:prerender()
         for _, d in pairs(self.knoxVpDemos or {}) do
             if d:getIsVisible() and d:busy() then on = true end
         end
+        -- ("@back gear": lit while the post's live grids are used - update 12)
+        if not on and KnoxNewsLive and KnoxNewsLive.busy and KnoxNewsLive.busy() then on = true end
         self.backSt = self.backSt or {}
         backLit = KnoxNewsBack.litFor(self.backSt, on, getTimestampMs(), post.back)
         KnoxNewsBack.grid(self, 0, 0, W, H, backC, backLit, 0.45)
@@ -787,6 +795,10 @@ function R:prerender()
                 y = y + math.floor(lh * 0.4)
                 KnoxNewsLive.hostGrid(self, centre - math.floor(w / 2), y, self.view)
                 y = y + h + pad + math.floor(lh * 0.4)
+            elseif b.kind == "live" and KnoxNewsLive and KnoxNewsLive.hostBlock and not KnoxNewsLive.broken then
+                -- update 12's live grids: the real grids on real things, in the view only
+                y = y + math.floor(lh * 0.4)
+                y = y + KnoxNewsLive.hostBlock(self, b.world, centre, y, self.view) + pad + math.floor(lh * 0.4)
             elseif b.kind == "rmenu" and KnoxNewsLive and not KnoxNewsLive.broken then
                 -- where the menu on R comes up while its key is held
                 y = y + math.floor(lh * 0.4)
@@ -916,6 +928,8 @@ function R:onMouseDown(x, y)
     if self.switchTo then return true end
     -- (past the live post's context menu: it closes - the click isn't one on the post)
     if KnoxNewsLive and KnoxNewsLive.menuUp then return true end
+    -- the live backpack's header: Compact, Sort, fold (update 12)
+    if KnoxNewsLive and KnoxNewsLive.onHostDown and KnoxNewsLive.onHostDown(x, y) then return true end
     -- the support plate's buttons in a post of the pinned style
     local sup = self.support
     if sup and sup.btn and sup.inView and T.inRect(x, y, sup.btn) then

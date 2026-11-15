@@ -30,6 +30,12 @@ function Item:getGunTypeString() return "Pistol" end
 
 local Container = getmetatable(INV)
 function Container:getItemCountRecurse(t) return self:getAllTypeRecurse(t):size() end
+-- (the game's, as its transferBullets: the first n of a type, bags inside too - L.bringRounds 14.11)
+function Container:getSomeTypeRecurse(t, n)
+    local all, out = self:getAllTypeRecurse(t), {}
+    for i = 0, math.min(n, all:size()) - 1 do table.insert(out, all:get(i)) end
+    return JList(out)
+end
 function Container:getItems() return JList(self.items) end
 
 -- the actions: the queue is real enough to be seen and emptied
@@ -135,6 +141,7 @@ function ISPanel:derive(name)
 end
 function ISPanel:drawTexture() end
 function ISPanel:drawTextureScaledAspect() end
+function ISPanel:drawTextureScaled() end
 
 -- the Java part
 RMENU_FLAG = false
@@ -153,6 +160,7 @@ function PLAYER:isAiming() return AIMING == true end
 function PLAYER:isRunning() return false end
 function PLAYER:isSprinting() return false end
 KnoxEquip = {norm = function(s) return s end, LOC = {webbing = {slot = "rig"}, back = {slot = "back"}, belt = {slot = "belt"}}}
+function KnoxEquip.locOf(n) return KnoxEquip.LOC[n] end
 KnoxActions = {activeBag = function() return CHOSEN end}
 KnoxFootprint = KnoxFootprint or {overrides = {}}
 function KnoxFootprint.get() return 1, 2 end

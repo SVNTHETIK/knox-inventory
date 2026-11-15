@@ -135,6 +135,7 @@ KnoxGrid.useNow = {}
 KnoxGrid.pending = {}
 KnoxGrid.liveGrids = {}
 KnoxGrid.fixedSize = {}
+KnoxGrid.freeSize = {}
 function KnoxGrid.useOf() return nil end
 function KnoxGrid.updateUse(player) USE_ASKED = player end
 function KnoxGrid.dims(e, r) return e.w, e.h end

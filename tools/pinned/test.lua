@@ -364,7 +364,7 @@ run("a post in the pinned style, whole", function()
     local R = KnoxMenuNewsReader
     local winter
     for _, p in ipairs(N.posts or N.load()) do
-        if string.find(table.concat(p.body, "|"), "@pinstyle", 1, true) then winter = p break end
+        if string.find(table.concat(p.body, "|"), "@back blizzard", 1, true) then winter = p break end   -- (the winter post: update 12 is pinned-style too)
     end
     check("there is one", winter ~= nil)
     if not winter then return end
@@ -458,6 +458,35 @@ run("a post in the pinned style, whole", function()
     live.took = false
     o:onRightMouseUp(1, 1)
     check("with no menu it leaves, as always", R.instance == nil)
+
+    -- update 12 "No limit" (2026-11-15): its gear, its own picture, its two live grids
+    local u12
+    for _, p in ipairs(N.posts or N.load()) do
+        if string.find(table.concat(p.body, "|"), "@back gear", 1, true) then u12 = p break end
+    end
+    check("update 12's post is there", u12 ~= nil)
+    if u12 then
+        local asked, busyAsked = {}, 0
+        function live.hostBlock(host, world, centre, y, view) asked[world] = (asked[world] or 0) + 1 return 120 end
+        function live.busy() busyAsked = busyAsked + 1 return true end
+        function live.onHostDown() return false end
+        STENCIL.level, UI.knoxClip = 0, nil
+        R.open(u12)
+        local p = R.instance
+        MOUSE.x, MOUSE.y = -1, -1
+        for _ = 1, 2 do
+            clock = clock + 16
+            p:prerender()
+            p:render()
+        end
+        check("its gear, its tech colour, its own picture", u12.back == "gear" and u12.frameColor ~= nil and u12.artFile == "u12_art_ru.png", u12.artFile)
+        local k = {}
+        for _, b in ipairs(p.blocks) do if b.kind == "live" then k[b.world] = (k[b.world] or 0) + 1 end end
+        check("the backpack with the floor and the guns, once each", k.free == 1 and k.parts == 1)
+        check("both live grids asked for", (asked.free or 0) >= 2 and (asked.parts or 0) >= 2)
+        check("its backdrop asks whether they are used", busyAsked >= 1, busyAsked)
+        R.leave()
+    end
     KnoxNewsLive = nil
     STENCIL.level, UI.knoxClip = 0, nil
     if o.knoxClip then o.knoxClip = nil end

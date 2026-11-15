@@ -43,12 +43,22 @@ local GRP_MAX = 6   -- a group's rows shown at most; more scroll between two str
 -- Sizes at 1080p (a cell of 48), scaled with the cell -------------------------------
 
 local Z = {}
+P.Z = Z   -- (its sizes, for the tests)
 local function sizes()
-    local c = T.cell
-    if Z.cell == c and Z.java == T.javaFonts then return end
+    -- (the panel's own size in the settings, Viewpoint's Loot Menu: the author 2026-11-13 -
+    -- the live panel only, the news' demo of it keeps its frame)
+    local k = (P.src and P.src.live and T.look) and T.look("vp.scale") / 100 or 1
+    local c = T.cell * k
+    if Z.cell == c and Z.java == T.javaFonts and Z.font == T.fontText then return end
     local s = c / 48
     local function px(n) return math.max(1, math.floor(n * s + 0.5)) end
-    Z.cell, Z.java = c, T.javaFonts
+    Z.cell, Z.java, Z.font = c, T.javaFonts, T.fontText
+    -- its fonts: Knox's at its size (the game's fonts, without Knox's, stay as they are)
+    if k == 1 or not T.javaFonts then
+        Z.fText, Z.fHead, Z.fTile = T.fontText, T.fontHeader, T.fontTile
+    else
+        Z.fText, Z.fHead, Z.fTile = T.makeFont("body", c * 0.31), T.makeFont("title", c * 0.42), T.makeFont("head", c * 0.25)
+    end
     Z.GAP, Z.M, Z.ROW, Z.LABEL, Z.SEP = px(8), px(7), px(32), px(32), px(11)
     Z.L = Z.GAP + Z.M
     Z.CELL, Z.IC, Z.AIC = px(26), px(22), px(17)
@@ -64,7 +74,8 @@ local function sizes()
     -- the lines, 9 under; the dot between the parts 4 off their letters - .claude/mockups/vp_scrap_v1.html)
     Z.R9, Z.R7, Z.DOT_G = px(9), px(7), px(4)
     -- (the chosen row's name a size up: 15 -> 17)
-    Z.big = T.javaFonts and T.makeFont("body", c * 0.31 + 2 * s) or T.fontText
+    Z.big = T.javaFonts and T.makeFont("body", c * 0.31 + 2 * s) or Z.fText
+    P.dirty = true   -- (a new size: the rows and the width measured again)
 end
 
 -- Strings, once a game --------------------------------------------------------------
@@ -79,6 +90,7 @@ local function strings()
         unfold = getText("IGUI_Knox_VPUnfold"),
         searching = getText("IGUI_Knox_VPSearching"), unsearched = getText("IGUI_Knox_VPUnsearched"),
         empty = getText("IGUI_Knox_VPEmpty"), locked = getText("IGUI_Knox_VPLocked"),
+        keyHere = getText("IGUI_Knox_VPKeyHere"),
         inside = getText("IGUI_Knox_VPInside"), actions = getText("IGUI_Knox_MenuActions"),
         kg = getText("IGUI_Knox_Kg"), plural = getText("IGUI_Knox_VPPlural"),
         thing1 = getText("IGUI_Knox_VPThing1"), thing2 = getText("IGUI_Knox_VPThing2"), thing5 = getText("IGUI_Knox_VPThing5"),
@@ -163,6 +175,7 @@ end
 -- author 2026-10-25: "an interactive window, as the posts before").
 
 local LIVE = {}
+LIVE.live = true   -- (the real one: the panel's size setting is for it - sizes)
 P.LIVE = LIVE
 P.src = LIVE
 
@@ -203,6 +216,27 @@ end
 function LIVE.actionGroup(i)
     local act = vpAction(i)
     return act and type(act.group) == "string" and act.group or nil
+end
+-- (the car looked at at one of its seats' doors - its own panel with "Enter Vehicle":
+-- Viewpoint's ViewpointInteract.harvestVehicle; nil for anything else. The trunk and the
+-- hood make the same panel of the car, without "Enter Vehicle" - no key there: the
+-- author's bench 2026-11-13, "на багажнике ключ не показывался")
+function LIVE.vehicle()
+    local V = ISVehicleMenu
+    if not (V and V.onEnter) then return nil end
+    for i = 0, knoxVpPanelActions() - 1 do
+        local act = vpAction(i)
+        if act and act.fn == V.onEnter and type(act.args) == "table" then
+            local v = act.args[2]
+            if v and instanceof(v, "BaseVehicle") then return v end
+        end
+    end
+    return nil
+end
+-- (the car's key anywhere on the character - KnoxDashboard.carriedKey, bags and key rings too)
+function LIVE.hasKey(player, v)
+    local D = KnoxDashboard
+    return D ~= nil and D.carriedKey ~= nil and D.carriedKey(player, v) ~= nil
 end
 -- (a locked door tried, as the game's interact key does: it rattles, the character finds it locked)
 function LIVE.rattle()
@@ -323,6 +357,8 @@ function LIVE.held() return knoxVpPanelHeld() end
 function LIVE.isBag(it) return instanceof(it, "InventoryContainer") and it:getInventory() ~= nil end
 function LIVE.weight(it) return KnoxGrid.weightOf(it) end
 function LIVE.category(it) return T.categoryOf(it) end
+-- (frozen, cooking, hot: the tile's colour as the inventory's - the author 2026-11-14)
+function LIVE.color(it, c) return T.itemColor(it, c) end
 function LIVE.icon(ui, it, x, y, a, s) ISInventoryItem.renderItemIcon(ui, it, x, y, a, s, s) end
 
 function LIVE.containerIcon(c)
@@ -448,7 +484,10 @@ local function selectable(r)
     return r.kind == "act" and (r.on or r.locked or r.grp ~= nil or r.gj ~= nil) and not r.closing
 end
 
-local function catColor(item) return T.category[P.src.category(item)] or T.category.misc end
+local function catColor(item)
+    local c = T.category[P.src.category(item)] or T.category.misc
+    return P.src.color and P.src.color(item, c) or c
+end
 local frameOf = {}   -- a category's tile frame: its colour, lighter (as a tile's in the mockup)
 local function tileEdge(cat)
     local f = frameOf[cat]
@@ -557,7 +596,7 @@ local function lookOf(label, i, name)
     return v
 end
 
-local lockTex, lensTex, moreTex
+local lockTex, lensTex, moreTex, keyTex, emptyTex
 local function texOf(name)
     return getTexture("media/ui/knoxicons/menu_" .. name .. ".png")
 end
@@ -875,18 +914,18 @@ end
 local function reqFit(r, room)
     local s = strings()
     local G = Z.DOT_G
-    local dl, dr = inkOf(T.fontTile, s.dot1)
+    local dl, dr = inkOf(Z.fTile, s.dot1)
     local dotW = G + (dr - dl) + G
     local parts = r.req
     r.reqX, r.dotX = r.reqX or {}, r.dotX or {}
     r.reqN, r.reqCut, r.reqMore, r.reqMoreBad = 0, nil, nil, false
     local x = 0   -- (the first column after the last letters)
     for k, p in ipairs(parts) do
-        local pl, pr = inkOf(T.fontTile, p.s)
+        local pl, pr = inkOf(Z.fTile, p.s)
         local more = #parts - k
         local plus = 0
         if more > 0 then
-            local ml, mr = inkOf(T.fontTile, getText("IGUI_Knox_VPMore", more))
+            local ml, mr = inkOf(Z.fTile, getText("IGUI_Knox_VPMore", more))
             plus = dotW + mr - ml
         end
         local dw = k > 1 and dotW or 0
@@ -901,8 +940,8 @@ local function reqFit(r, room)
         else
             local from = k
             if k == 1 then
-                local cut = T.fit(p.s, T.fontTile, room - plus)
-                local cl, cr = inkOf(T.fontTile, cut)
+                local cut = T.fit(p.s, Z.fTile, room - plus)
+                local cl, cr = inkOf(Z.fTile, cut)
                 r.reqCut, r.reqX[1], r.reqN = cut, -cl, 1
                 x = cr - cl
                 from = 2
@@ -910,7 +949,7 @@ local function reqFit(r, room)
             local n = #parts - from + 1
             if n > 0 then
                 r.reqMore = getText("IGUI_Knox_VPMore", n)
-                local ml = inkOf(T.fontTile, r.reqMore)
+                local ml = inkOf(Z.fTile, r.reqMore)
                 r.moreDotX, r.moreX = x + G - dl, x + dotW - ml
                 for j = from, #parts do if parts[j].bad then r.reqMoreBad = true end end
             end
@@ -925,13 +964,13 @@ function P.measureNeed()
     local need = Z.MINW
     local ph = P.hasSub() and Z.PH_SUB or Z.PH
     local cell = ph - 2 * Z.M
-    need = math.max(need, Z.GAP * 2 + Z.M * 2 + Z.P10 + cell + T.measure(T.fontHeader, P.title or ""))
+    need = math.max(need, Z.GAP * 2 + Z.M * 2 + Z.P10 + cell + T.measure(Z.fHead, P.title or ""))
     local hasItem, hasBag, hasAct, hasGrp = false, false, false, false
     for _, r in ipairs(P.rows) do
         if r.kind == "item" and not r.leaveMs then
             hasItem = true
             if r.bag then hasBag = true end
-            local tail = (r.ntext and (Z.P5 + T.measure(T.fontText, r.ntext)) or 0) + Z.P16 + T.measure(T.fontText, r.wtext)
+            local tail = (r.ntext and (Z.P5 + T.measure(Z.fText, r.ntext)) or 0) + Z.P16 + T.measure(Z.fText, r.wtext)
                 + (r.bag and Z.CHEV or 0)
             r.tail = math.ceil(tail)
             need = math.max(need, Z.TX + (r.depth > 0 and Z.IND or 0) + math.ceil(T.measure(Z.big, r.name)) + r.tail + Z.L + 1)
@@ -941,7 +980,7 @@ function P.measureNeed()
                 for i = 0, items:size() - 1 do
                     local it = items:get(i)
                     need = math.max(need, Z.TX + Z.IND + math.ceil(T.measure(Z.big, it:getName() or "")) + Z.P16
-                        + math.ceil(T.measure(T.fontText, kgText(P.src.weight(it)))) + Z.L + 1)
+                        + math.ceil(T.measure(Z.fText, kgText(P.src.weight(it)))) + Z.L + 1)
                 end
             end
         elseif r.kind == "act" then
@@ -949,31 +988,35 @@ function P.measureNeed()
             if r.req then
                 -- (the line under it whole: the plate takes it, up to its widest)
                 local s1 = strings()
-                local dl, dr = inkOf(T.fontTile, s1.dot1)
+                local dl, dr = inkOf(Z.fTile, s1.dot1)
                 local w = 0
                 for k, p in ipairs(r.req) do
-                    local pl, pr = inkOf(T.fontTile, p.s)
+                    local pl, pr = inkOf(Z.fTile, p.s)
                     w = w + (k > 1 and (2 * Z.DOT_G + dr - dl) or 0) + pr - pl
                 end
                 need = math.max(need, Z.TX + (r.parent and Z.IND or 0) + w + Z.L)
             end
-            need = math.max(need, Z.TX + (r.parent and Z.IND or 0) + T.measure(T.fontText, r.name) + Z.L
-                + (r.grp and Z.CHEV or 0) + (r.locked and (Z.P10 + T.measure(T.fontTile, s.lockedCaps)) or 0))
+            need = math.max(need, Z.TX + (r.parent and Z.IND or 0) + T.measure(Z.fText, r.name) + Z.L
+                + (r.grp and Z.CHEV or 0) + (r.locked and (Z.P10 + T.measure(Z.fTile, s.lockedCaps)) or 0))
             -- (a group's rows count whether it is unfolded or not: the plate doesn't widen as it unfolds)
             if r.grp then
                 hasGrp = true
                 for _, k in ipairs(r.kids) do
-                    need = math.max(need, Z.TX + Z.IND + T.measure(T.fontText, k.name) + Z.L
-                        + (k.locked and (Z.P10 + T.measure(T.fontTile, s.lockedCaps)) or 0))
+                    need = math.max(need, Z.TX + Z.IND + T.measure(Z.fText, k.name) + Z.L
+                        + (k.locked and (Z.P10 + T.measure(Z.fTile, s.lockedCaps)) or 0))
                 end
             end
         elseif r.kind == "label" then
-            need = math.max(need, Z.L + T.measure(T.fontTile, T.upper(r.text)) + Z.P40 + Z.L)
+            need = math.max(need, Z.L + T.measure(Z.fTile, T.upper(r.text)) + Z.P40 + Z.L)
         elseif r.kind == "searching" or r.kind == "unsearched" or r.kind == "empty" then
-            need = math.max(need, Z.TX + T.measure(T.fontText, s[r.kind]) + Z.L)
+            need = math.max(need, Z.TX + T.measure(Z.fText, s[r.kind]) + Z.L)
         end
     end
-    if P.sub then need = math.max(need, Z.GAP * 2 + Z.M * 2 + Z.P10 + cell + T.measure(T.fontTile, P.sub)) end
+    if P.sub then
+        -- (the key's picture before "Key on hand")
+        local pic = P.keyHere and (math.floor(Z.P10 * 1.5 + 0.5) + Z.P5) or 0
+        need = math.max(need, Z.GAP * 2 + Z.M * 2 + Z.P10 + cell + pic + T.measure(Z.fTile, P.sub))
+    end
     -- (as wide as the widest hints it can show: the chosen row changes them)
     local win = P.canOpen() and (Z.HINT_GAP + P.hintW(KEYS.open, s.open)) or 0
     -- (a container with things, and Viewpoint's place key: four keys, in two lines and two
@@ -1010,7 +1053,7 @@ function P.measureNeed()
         need = math.max(need, Z.L + P.hintW(KEYS.take, s.unfold) + win + Z.L, Z.L + P.hintW(KEYS.take, s.fold) + win + Z.L)
     end
     P.needW = math.min(Z.MAXW, math.max(Z.MINW, math.ceil(need)))
-    Z.CAP1, Z.CAP2 = capH(T.fontText), capH(T.fontTile)
+    Z.CAP1, Z.CAP2 = capH(Z.fText), capH(Z.fTile)
     Z.REQ = Z.R9 + Z.CAP1 + Z.R7 + Z.CAP2 + Z.R9
     for _, r in ipairs(P.rows) do
         if r.req then reqFit(r, P.needW - Z.TX - Z.L - (r.parent and Z.IND or 0)) end
@@ -1018,7 +1061,7 @@ function P.measureNeed()
 end
 
 function P.hintW(key, label)
-    return T.keyW(key) + 6 + math.ceil(T.measure(T.fontText, label))
+    return T.keyW(key, Z.fTile) + 6 + math.ceil(T.measure(Z.fText, label))
 end
 
 function P.hasSub()
@@ -1054,11 +1097,26 @@ function P.head()
         P.icon = (first and first.icon) or texOf("here")
     end
     P.sub = nil
+    P.keyHere = P.car ~= nil and P.carKey == true
     if P.locked then
         P.sub = s.locked
     elseif P.loot then
         P.sub = "0"   -- (made each frame from the count: P.drawHead)
+    elseif P.keyHere then
+        P.sub = s.keyHere
     end
+end
+
+-- The car's own panel: its key on the character? (the author 2026-11-13, variant C of
+-- .claude/mockups/vp_panel_empty_key.html: "Key on hand" under the car's name - on the
+-- car itself only, not on each of its containers). Looked for again every tenth of a second
+-- with the signature, as the key can come and go while the panel stays.
+local function carKey(player)
+    local v = (not P.loot) and P.src.vehicle and P.src.vehicle() or nil
+    local has = v ~= nil and P.src.hasKey ~= nil and P.src.hasKey(player, v) or false
+    local changed = v ~= P.car or has ~= P.carKey
+    P.car, P.carKey = v, has
+    return changed
 end
 
 -- Input --------------------------------------------------------------------------------
@@ -1496,7 +1554,7 @@ local function drawRow(ui, r, x0, y, W, sel, taking, a, inset)
     local RH = r.kind == "item" and r.full or Z.ROW
     if r.kind == "label" then
         local cap = T.upper(r.text)
-        local w = label(ui, cap, x0 + Z.L, y + Z.P10, W, Z.LABEL - Z.P10 * 2 + 2, C.dim, T.fontTile, 0.8 * a)
+        local w = label(ui, cap, x0 + Z.L, y + Z.P10, W, Z.LABEL - Z.P10 * 2 + 2, C.dim, Z.fTile, 0.8 * a)
         local lx = x0 + Z.L + math.floor(w + Z.P10 + 0.5)
         T.rect(ui, lx, y + math.floor(Z.LABEL * 0.69 + 0.5), x0 + W - Z.L - lx, 1, C.border, a)
     elseif r.kind == "sep" then
@@ -1514,7 +1572,7 @@ local function drawRow(ui, r, x0, y, W, sel, taking, a, inset)
         local is = math.floor(Z.IC + Z.GROW_CELL * g + 0.5)
         local ccx, ccy = x0 + Z.L + Z.CELL / 2, y + RH / 2
         local fx, fy = math.floor(ccx - cs / 2 + 0.5), math.floor(ccy - cs / 2 + 0.5)
-        T.rect(ui, fx, fy, cs, cs, r.cat, a)
+        T.glowRect(ui, fx, fy, cs, cs, r.cat, a, 1)   -- (the category's glow, as a tile's - the author 2026-11-14)
         P.src.icon(ui, r.item, math.floor(ccx - is / 2 + 0.5), math.floor(ccy - is / 2 + 0.5), a, is)
         -- (the frame over the picture; sand while it is being taken)
         T.border(ui, fx, fy, cs, cs, taking and C.accent or tileEdge(r.cat), a)
@@ -1528,8 +1586,8 @@ local function drawRow(ui, r, x0, y, W, sel, taking, a, inset)
             if open then chevron(ui, cx - 1, cy - math.floor(ch / 2) - 1, ch, -2, C.dim, a)
             else chevron(ui, cx - math.floor(ch / 2) - 1, cy - 1, ch, 1, C.dim, a) end
         end
-        label(ui, r.wtext, x0, y, right - x0, RH, C.dim, T.fontText, a, "right")
-        local nf = (g >= 0.5) and Z.big or T.fontText
+        label(ui, r.wtext, x0, y, right - x0, RH, C.dim, Z.fText, a, "right")
+        local nf = (g >= 0.5) and Z.big or Z.fText
         local room = W - Z.L - Z.TX - (r.tail or 0)
         local nameW = math.min(T.measure(nf, r.name), room)
         if sel and T.measure(nf, r.name) > room then
@@ -1539,7 +1597,7 @@ local function drawRow(ui, r, x0, y, W, sel, taking, a, inset)
         else
             label(ui, sel and r.name or T.fit(r.name, nf, room), x0 + Z.TX, y, room, RH, sel and C.bright or C.text, nf, a)
         end
-        if r.ntext then label(ui, r.ntext, x0 + Z.TX + math.floor(nameW + Z.P5 + 0.5), y, 0, RH, C.dim, T.fontText, a) end
+        if r.ntext then label(ui, r.ntext, x0 + Z.TX + math.floor(nameW + Z.P5 + 0.5), y, 0, RH, C.dim, Z.fText, a) end
     elseif r.kind == "act" then
         local tint = (not r.on and C.dim) or (r.danger and RED) or (sel and C.accent) or C.dim
         local ia = r.on and a or a * 0.5
@@ -1574,13 +1632,13 @@ local function drawRow(ui, r, x0, y, W, sel, taking, a, inset)
             local okA = (sel and 1 or 0.9) * a
             for k = 1, r.reqN do
                 local p = r.req[k]
-                if k > 1 then label(ui, s.dot1, bx + r.dotX[k], by, 0, Z.CAP2, C.dim, T.fontTile, okA) end
-                label(ui, (k == 1 and r.reqCut) or p.s, bx + r.reqX[k], by, 0, Z.CAP2, p.bad and RED or C.dim, T.fontTile,
+                if k > 1 then label(ui, s.dot1, bx + r.dotX[k], by, 0, Z.CAP2, C.dim, Z.fTile, okA) end
+                label(ui, (k == 1 and r.reqCut) or p.s, bx + r.reqX[k], by, 0, Z.CAP2, p.bad and RED or C.dim, Z.fTile,
                     p.bad and a or okA)
             end
             if r.reqMore then
-                label(ui, s.dot1, bx + r.moreDotX, by, 0, Z.CAP2, C.dim, T.fontTile, okA)
-                label(ui, r.reqMore, bx + r.moreX, by, 0, Z.CAP2, r.reqMoreBad and RED or C.dim, T.fontTile, a)
+                label(ui, s.dot1, bx + r.moreDotX, by, 0, Z.CAP2, C.dim, Z.fTile, okA)
+                label(ui, r.reqMore, bx + r.moreX, by, 0, Z.CAP2, r.reqMoreBad and RED or C.dim, Z.fTile, a)
             end
         end
         if r.grp then
@@ -1594,26 +1652,32 @@ local function drawRow(ui, r, x0, y, W, sel, taking, a, inset)
         end
         if r.locked then
             -- (at the right, as the things' weight: "LOCKED" in red)
-            local tw = label(ui, s.lockedCaps, x0, y, W - Z.L, Z.ROW, RED, T.fontTile, a, "right")
+            local tw = label(ui, s.lockedCaps, x0, y, W - Z.L, Z.ROW, RED, Z.fTile, a, "right")
             room = room - math.ceil(tw) - Z.P10
         end
-        label(ui, T.fit(r.name, T.fontText, room), x0 + Z.TX, ny, room, nh, col, T.fontText,
+        label(ui, T.fit(r.name, Z.fText, room), x0 + Z.TX, ny, room, nh, col, Z.fText,
             (r.on or r.locked) and a or a * 0.75)
     elseif r.kind == "searching" then
         -- the thing being looked for: a plate filling with sand from the bottom in a
         -- breathing frame, as on Knox's grid
         local frac = P.src.searchFrac(r.container)
         KnoxSearch.drawCurrent(ui, x0 + Z.L, y + math.floor((Z.ROW - Z.CELL) / 2), Z.CELL, Z.CELL, frac, a)
-        label(ui, s.searching, x0 + Z.TX, y, W, Z.ROW, C.dim, T.fontText, a)
+        label(ui, s.searching, x0 + Z.TX, y, W, Z.ROW, C.dim, Z.fText, a)
     else
+        -- (an empty container's row: an empty cell, the author 2026-11-13, variant C)
+        local ic = nil
         if r.kind == "unsearched" then
             if lensTex == nil then lensTex = getTexture("media/ui/knox_lens.png") or false end
-            if lensTex then
-                ui:drawTextureScaledAspect(lensTex, x0 + Z.L + math.floor((Z.CELL - Z.AIC) / 2), y + math.floor((Z.ROW - Z.AIC) / 2),
-                    Z.AIC, Z.AIC, a, C.dim.r, C.dim.g, C.dim.b)
-            end
+            ic = lensTex
+        elseif r.kind == "empty" then
+            if emptyTex == nil then emptyTex = texOf("empty") or false end
+            ic = emptyTex
         end
-        label(ui, s[r.kind], x0 + Z.TX, y, W, Z.ROW, C.dim, T.fontText, a)
+        if ic then
+            ui:drawTextureScaledAspect(ic, x0 + Z.L + math.floor((Z.CELL - Z.AIC) / 2), y + math.floor((Z.ROW - Z.AIC) / 2),
+                Z.AIC, Z.AIC, a, C.dim.r, C.dim.g, C.dim.b)
+        end
+        label(ui, s[r.kind], x0 + Z.TX, y, W, Z.ROW, C.dim, Z.fText, a)
     end
 end
 
@@ -1716,7 +1780,7 @@ local function drawHints(ui, x, y, ks, ls, n, a)
             x = (slot % 2 == 0) and (x0 + P.col2) or x0
             hy = y + math.floor((slot - 1) / 2) * (Z.KH + Z.HINT_ROW)
         end
-        local x2 = T.keyHint(ui, x, hy, ks[i], ls[i], Z.KH, a)
+        local x2 = T.keyHint(ui, x, hy, ks[i], ls[i], Z.KH, a, Z.fTile, Z.fText)
         if at then at[i * 2 - 1], at[i * 2] = x, x2 end
         x = x2 + Z.HINT_GAP
     end
@@ -1728,7 +1792,7 @@ local function drawHead(ui, ox, oy, W, a)
     local C = T.color
     local L = P.L
     local hx, hy, hw = ox + Z.GAP, oy + Z.GAP, W - 2 * Z.GAP
-    T.rect(ui, hx, hy, hw, L.ph, C.header, a)
+    T.glowRect(ui, hx, hy, hw, L.ph, C.header, a, 2)   -- (glowing, as the tooltip's header - the author 2026-11-14)
     T.tileFrame(ui, hx, hy, hw, L.ph, C.tileFrame, a)
     local cx, cy, cell = hx + Z.M, hy + Z.M, L.cell
     T.rect(ui, cx, cy, cell, cell, C.cell, a)
@@ -1745,7 +1809,7 @@ local function drawHead(ui, ox, oy, W, a)
     local tx = cx + cell + Z.P10
     local tw = hx + hw - Z.M - tx
     if not P.sub then
-        label(ui, T.fit(P.title, T.fontHeader, tw), tx, cy, tw, cell, C.bright, T.fontHeader, a)
+        label(ui, T.fit(P.title, Z.fHead, tw), tx, cy, tw, cell, C.bright, Z.fHead, a)
         return
     end
     -- the name above, what is in it under it, the two about the picture's middle
@@ -1753,12 +1817,22 @@ local function drawHead(ui, ox, oy, W, a)
     local bh = math.floor(Z.KH)
     local ty = math.floor(mid - Z.P10 - bh / 2 + 0.5)
     local sy = math.floor(mid + Z.P10 * 1.27 - bh / 2 + 0.5)
-    label(ui, T.fit(P.title, T.fontHeader, tw), tx, ty, tw, bh, C.bright, T.fontHeader, a)
+    label(ui, T.fit(P.title, Z.fHead, tw), tx, ty, tw, bh, C.bright, Z.fHead, a)
     if P.locked then
         if lockTex == nil then lockTex = texOf("lock") or false end
         local ls = math.floor(Z.P10 * 1.2 + 0.5)
         if lockTex then ui:drawTextureScaledAspect(lockTex, tx - 2, sy + math.floor((bh - ls) / 2), ls, ls, a, RED.r, RED.g, RED.b) end
-        label(ui, P.sub, tx + ls + 2, sy, tw, bh, RED, T.fontTile, a)
+        label(ui, P.sub, tx + ls + 2, sy, tw, bh, RED, Z.fTile, a)
+        return
+    end
+    -- the car's key on hand: the key and the words in sand, where the lock and "Locked" go
+    if P.keyHere then
+        if keyTex == nil then keyTex = texOf("key") or false end
+        local ks = math.floor(Z.P10 * 1.5 + 0.5)
+        local A = C.accent
+        if keyTex then ui:drawTextureScaledAspect(keyTex, tx, sy + math.floor((bh - ks) / 2), ks, ks, a, A.r, A.g, A.b) end
+        local gx = ks + Z.P5
+        label(ui, P.sub, tx + gx, sy, tw - gx, bh, A, Z.fTile, a)
         return
     end
     -- the count: only the digits that change roll, as on a drum counter; sand while
@@ -1769,15 +1843,15 @@ local function drawHead(ui, ox, oy, W, a)
     end
     local col = busy and C.accent or C.dim
     local ns = P.countText
-    local nw = T.measure(T.fontTile, ns)
-    T.rollNumber(ui, P.roll, ns, tx, sy, nw, bh, col.r, col.g, col.b, a, T.fontTile)
+    local nw = T.measure(Z.fTile, ns)
+    T.rollNumber(ui, P.roll, ns, tx, sy, nw, bh, col.r, col.g, col.b, a, Z.fTile)
     -- (the rest made anew only when the shown weight changes)
     local w2 = round2(P.shownW or 0)
     if subW ~= w2 or P.subN ~= P.count then
         subW, P.subN = w2, P.count
         subText = " " .. thingsWord(P.count) .. strings().dot .. w2 .. " " .. strings().kg
     end
-    label(ui, subText, tx + nw, sy, tw - nw, bh, C.dim, T.fontTile, a)
+    label(ui, subText, tx + nw, sy, tw - nw, bh, C.dim, Z.fTile, a)
 end
 
 -- (as Knox's menu: a strip in the header's colour, a chevron where there is more)
@@ -2130,6 +2204,8 @@ function P.useKey(r)
 end
 
 function P.frame(ui)
+    -- (the bench breaks it once on purpose: the panel must come back by itself - KnoxTestBench vp_recover)
+    if P.benchFail then P.benchFail = nil error("bench: a made-up error") end
     local now = getTimestampMs()
     local dt = math.min(100, now - (P.ms or now))
     P.ms = now
@@ -2198,12 +2274,17 @@ function P.step(player, now, dt)
         for _, r in ipairs(P.rows) do
             if r.leaveMs and now - r.leaveMs >= LEAVE_MS then leaving = true end
         end
+        local keyMoved = carKey(player)
         if P.dirty or sig ~= P.sig or leaving then
             P.dirty, P.sig = false, sig
             P.build(player)
+            carKey(player)
             P.head()
             P.measureNeed()
             sumUp()
+        elseif keyMoved then
+            P.head()
+            P.measureNeed()
         end
     end
     if P.sel > #P.pick then P.sel = #P.pick end
@@ -2274,16 +2355,33 @@ function KnoxCrosshairLayer:new()
     return o
 end
 
+-- After an error Viewpoint's own panel is back for a second, then Knox's tries again
+-- (Apoch, Discord, 2026-11-13: F pressed fast taking things in the panel, and Knox's panel
+-- was gone till the game was restarted - one error had turned it off for good). Many
+-- errors in a row: off for the rest of the game, as before.
+local RETRY_MS, GIVE_UP = 1000, 20
+P.errors, P.retryAt = 0, 0
+
 function KnoxCrosshairLayer:render()
-    if P.failed then return end
+    if P.failed then
+        if P.errors >= GIVE_UP or getTimestampMs() < P.retryAt then return end
+        P.failed = false
+    end
     local ok, err = pcall(P.frame, self)
-    if not ok then
-        -- (anything amiss: Viewpoint's own panel is back, said once)
-        P.failed = true
-        P.clearClips(self)
-        if knoxVpPanelOwn then knoxVpPanelOwn(false) end
-        P.owned = false
-        print("[Knox] crosshair panel off after an error, Viewpoint's own panel is back: " .. tostring(err))
+    if ok then
+        if P.errors > 0 and getTimestampMs() > P.retryAt + 60000 then P.errors = 0 end
+        return
+    end
+    P.failed = true
+    P.errors = P.errors + 1
+    P.retryAt = getTimestampMs() + RETRY_MS
+    pcall(P.clearClips, self)
+    if knoxVpPanelOwn then knoxVpPanelOwn(false) end
+    P.owned = false
+    if P.errors >= GIVE_UP then
+        print("[Knox] crosshair panel off after " .. GIVE_UP .. " errors, Viewpoint's own panel is back: " .. tostring(err))
+    elseif P.errors <= 3 then
+        print("[Knox] crosshair panel: an error, Viewpoint's own panel for a second: " .. tostring(err))
     end
 end
 

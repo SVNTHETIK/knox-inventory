@@ -540,6 +540,8 @@ function KnoxLootPanel:headerLayout()
     out.bad = #L.overflow > 0
     if out.bad then out.info = getText("IGUI_Knox_Overflow", #L.overflow) .. "  " .. out.info end
     local list = {{title = getText("IGUI_Knox_SortFull"), id = "sort", icon = "sort"}}
+    -- Compact, left of Sort: only with no limit (KnoxGrid.free; the author 2026-11-15, mockup K1)
+    if L.free then table.insert(list, {title = getText("IGUI_Knox_Compact"), id = "compact", icon = "compact"}) end
     -- the eye: the layout's silhouettes shown or hidden (only where there is a layout)
     if KnoxOrder.layoutOf(self.selected) then
         table.insert(list, {title = getText(KnoxOrder.ghostsOn() and "IGUI_Knox_Order_HideGhosts" or "IGUI_Knox_Order_ShowGhosts"),
@@ -591,8 +593,18 @@ local function drawIcon(ui, r, icon, c, a)
         local base = y1 - u
         local tip = base - 2
         box(cx - hu, y0, u, tip - head - y0 + 1)
-        for i = 0, head - 1 do box(cx - i, tip - i, i * 2 + 1, 1) end
+        -- (each row of the head 2i + u wide, around the stem: centred on it as the line is -
+        -- 2i + 1 stood half a pixel right of it, the critic 2026-11-15)
+        for i = 0, head - 1 do box(cx - hu - i, tip - i, i * 2 + u, 1) end
         box(x0, base, w, u)
+    elseif icon == "compact" then
+        -- a line on top, an arrow up to it: the things go up (the "floor" one turned over;
+        -- Compact, the author 2026-11-15, mockup free_grid.html K1)
+        local head = math.max(3, math.floor(w * 0.36 + 0.5))
+        local tip = y0 + u + 1
+        box(x0, y0, w, u)
+        for i = 0, head - 1 do box(cx - hu - i, tip + i, i * 2 + u, 1) end
+        box(cx - hu, tip + head, u, y1 - tip - head)
     elseif icon == "cross" then
         for i = 0, w - u do
             box(x0 + i, y0 + i, u, u)
@@ -1229,6 +1241,8 @@ function KnoxLootPanel:onMouseDown(x, y)
                     KnoxActions.takeAll(self.view, self:player())
                 elseif b.id == "sort" then
                     KnoxActions.sort(self.view)
+                elseif b.id == "compact" then
+                    KnoxOrder.compact(self.view)
                 elseif b.id == "ghosts" then
                     KnoxOrder.toggleGhosts()
                 else

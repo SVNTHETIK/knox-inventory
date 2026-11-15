@@ -1727,7 +1727,7 @@ function D:tipOf(id, st)
         local chr = self.character
         if st.hot then t.note = tx("Tip_Ign_Hot")
         elseif st.keyIn then t.note = tx("Tip_Ign_Key")
-        elseif chr and chr:getInventory():haveThisKeyId(v:getKeyId()) then t.note = tx("Tip_Ign_Put")
+        elseif chr and D.carriedKey(chr, v) then t.note = tx("Tip_Ign_Put")
         else t.note = getText("Tooltip_Dashboard_NoKey") end
     elseif id == "tt_engine" then
         t.title, t.icon = getText("Tooltip_Dashboard_Engine"), "lamp_engine"
@@ -1937,6 +1937,13 @@ function D:game(fn)
         vd.vehicle = self.vehicle
         f(vd)
     end
+end
+
+--- The key of `v` the character has with them, or nil. With the Java part the game's
+--- own lookup sees into bags and key rings in bags too (KnoxCarKey, the author 2026-11-13:
+--- the key works where it lies and stays there - not taken out first).
+function D.carriedKey(chr, v)
+    return chr:getInventory():haveThisKeyId(v:getKeyId())
 end
 
 function D:act(id, right)

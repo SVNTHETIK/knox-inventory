@@ -51,7 +51,7 @@ local PAGE_ITEMS = {
             {"slider", "look.line"}, {"slider", "look.slot"}, {"slider", "look.model"}, {"switch", "anim"},
             {"sec", "Sec_look_hotbar"}, {"slider", "hotbar.alpha"}, {"switch", "hotbar.hide"}, {"slider", "hotbar.hideTime"}},
     game = {{"sec", "Sec_game_search"}, {"switch", "search"}, {"slider", "search.time"}, {"switch", "scatter"},
-            {"choice", "loot.scope"}, {"switch", "vp.panel"}, {"sec", "Sec_game_bags"}, {"switch", "home"}, {"slider", "grid.scale"}},
+            {"choice", "loot.scope"}, {"switch", "vp.panel"}, {"slider", "vp.scale"}, {"sec", "Sec_game_bags"}, {"switch", "home"}, {"slider", "grid.scale"}, {"switch", "grid.free"}},
     order = {{"sec", "Order_Title"}, {"choice", "order.rule"}, {"choice", "order.auto"}, {"sec", "Order_Cats"},
              {"cathelp"}, {"cats"}},
     sound = {{"sec", "Sec_sound_ui"}, {"slider", "search.sound"}, {"slider", "ui.sound"},
@@ -67,8 +67,10 @@ local function specOf(list, key)
     return nil
 end
 
---- A switch shown here (only = "viewpoint": only where Viewpoint has the part it needs - 2026-10-25).
+--- A switch shown here (only = "viewpoint": only where Viewpoint has the part it needs - 2026-10-25;
+--- only = "health": only with the health module on - its mini-games, 2026-11-10).
 local function listed(s)
+    if s.only == "health" then return T.on("health") end
     return s.only ~= "viewpoint" or (KnoxCompat ~= nil and KnoxCompat.vpHas("panel") == true)
 end
 
@@ -213,9 +215,9 @@ function KnoxSettings:layout()
                 y = y + #e.lines * (ft + 2)
             elseif kind == "slider" then
                 e.spec = specOf(T.LOOK, key)
-                keep = e.spec ~= nil
+                keep = e.spec ~= nil and listed(e.spec)
                 if keep then
-                    e.name = getText("IGUI_Knox_" .. (string.gsub(key, "%.", "_")))
+                    e.name, e.new = getText("IGUI_Knox_" .. (string.gsub(key, "%.", "_"))), e.spec.new
                     y = y + L.sliderH + pad + L.tail
                 end
             elseif kind == "switch" then
@@ -584,7 +586,9 @@ function KnoxSettings:drawItem(e, oy, mx, my, hot, now)
         lines(self, e.lines, L.x0, y, T.color.dim)
     elseif kind == "slider" then
         local spec, sh = e.spec, L.sliderH
-        label(self, e.name, L.x0, y, 0, sh, T.color.text, T.fontText)
+        local nw = label(self, e.name, L.x0, y, 0, sh, T.color.text, T.fontText)
+        -- (a new one: the same sand plate as a switch's, after its name)
+        if e.new then plateMark(self, L.newMark, L.x0 + math.floor(nw + 0.5) + pad, y + math.floor((sh - T.fontTileH - 4) / 2), T.color.accent) end
         local fixed = serverValue(spec)
         local v = fixed or T.look(spec.key)
         local mid = y + math.floor(sh / 2)
@@ -861,6 +865,8 @@ function KnoxSettings:clickItem(e, x, y, oy)
     elseif kind == "switch" and inRect(x, y, set(R1, L.x0, ey, L.x1 - L.x0, e.h)) then
         T.settings[e.key] = T.switch(e.key) and "0" or "1"
         T.saveSettings()
+        -- (no limit on or off: the grids behind are laid out anew at once)
+        if e.key == "grid.free" and KnoxScreen and KnoxScreen.instance then KnoxScreen.instance:markAllDirty() end
         getSoundManager():playUISound("UIActivateButton")
         return true
     elseif kind == "slider" and inRect(x, y, self:sliderRect(e, oy)) and not serverValue(e.spec) then

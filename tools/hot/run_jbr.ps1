@@ -5,7 +5,7 @@
 #
 # Nothing of the game's is changed: the game is started from its folder the way its launcher
 # does it (ProjectZomboid64.json is read each time - a game update's flags come along), only
-# with JBR's java.exe, G1 instead of Shenandoah (enhanced redefinition takes Serial or G1 only:
+# with JBR's java.exe, Serial (see below) instead of Shenandoah (enhanced redefinition takes Serial or G1 only:
 # "Must use the Serial or G1 GC with enhanced class redefinition") and the flag above.
 # ZombieBuddy: -agentlib:zbNative stays; zbNative loads instrument.dll from the running Java's
 # folder (JBR has its own) and ZombieBuddy.jar from the game's folder.
@@ -17,7 +17,11 @@
 #
 # JBR lives in C:\Users\pielo\Zomboid\tools\jbr-25 (jbr-25.0.4.1-windows-x64-b635.79, from
 # github.com/JetBrains/JetBrainsRuntime releases, checksum checked 2026-11-10).
-param([switch]$show, [Parameter(ValueFromRemainingArguments = $true)][string[]]$gameArgs = @())
+# 2026-11-11 (the author's two crashes at start with Java v154): the Serial collector, not G1 - JBR
+# died inside its own redefinition (RedefineClasses, a heap walk of G1's) while ZombieBuddy patched
+# the game's classes; enhanced redefinition was made for Serial first. -gc G1: the old way.
+# Returns the game's process (launch.ps1 watches it).
+param([switch]$show, [ValidateSet('Serial', 'G1')][string]$gc = 'Serial', [Parameter(ValueFromRemainingArguments = $true)][string[]]$gameArgs = @())
 $ErrorActionPreference = 'Stop'
 $game = 'C:\Program Files (x86)\Steam\steamapps\common\ProjectZomboid'
 $jbr = 'C:\Users\pielo\Zomboid\tools\jbr-25\bin\java.exe'
@@ -30,12 +34,15 @@ foreach ($a in $cfg.vmArgs) {
     if ($vm -contains $a) { continue }                 # (the game's list repeats some)
     $vm += $a
 }
-$vm += '-XX:+UseG1GC'
+$vm += "-XX:+Use$($gc)GC"
+# 2026-11-11 (the author: "the loading went on very long"): JBR's java.io over NIO made every
+# file check slower - the game's and Viewpoint's walks over thousands of mod files at loading
+$vm += '-Djbr.java.io.use.nio=false'
 $vm += '-XX:+AllowEnhancedClassRedefinition'
 $cp = ($cfg.classpath -join ';')
 $main = $cfg.mainClass -replace '/', '.'
 $all = $vm + @('-cp', $cp, $main) + $gameArgs
 
 if ($show) { "cd `"$game`""; "`"$jbr`" " + ($all -join ' '); return }
-"Starting the game on JetBrains Runtime (enhanced class redefinition on)..."
-Start-Process -FilePath $jbr -ArgumentList $all -WorkingDirectory $game
+Write-Host "Starting the game on JetBrains Runtime (enhanced class redefinition on, $gc GC)..."
+Start-Process -FilePath $jbr -ArgumentList $all -WorkingDirectory $game -PassThru

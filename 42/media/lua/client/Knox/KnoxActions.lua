@@ -69,7 +69,8 @@ end
 --- nil: none chosen, or no longer on the character.
 function A.activeBag(player)
     local active = activeOf(player)
-    if active and active:isInCharacterInventory(player) then return active end
+    -- (a news post's pretend character, a Lua table: none - the game's question takes a real one)
+    if active and type(player) ~= "table" and active:isInCharacterInventory(player) then return active end
     return nil
 end
 
@@ -128,13 +129,16 @@ function A.allViews()
     for _, v in ipairs(A.lootViews()) do table.insert(out, v) end
     for _, v in ipairs(A.windowViews()) do table.insert(out, v) end
     if A.newsView then table.insert(out, A.newsView) end   -- (the live grid of a news post: KnoxNewsLive)
+    -- (a post with more live grids - a backpack and the floor, update 12: all of them)
+    local nv = A.newsViews
+    if nv then for i = 1, #nv do table.insert(out, nv[i]) end end
     return out
 end
 
 --- On the character's side (pockets, worn bags, anything nested in them)?
 local function isPlayerView(view)
     local player = view:player()
-    return view.container == player:getInventory() or view.container:isInCharacterInventory(player)
+    return KnoxGrid.onCharacter(view.container, player)
 end
 
 --- Can the character reach this container right now: on them, in one of the
@@ -177,11 +181,15 @@ local function topUp(views, e, player, source)
                 if not t.overflow and not A.isLocked(t) and not (KnoxSearch and KnoxSearch.unseen(t.item)) then
                     room = KnoxGrid.mergeRoom(e, t)
                 end
+                local part, rest = {}, {}
                 if room > 0 and room < #e.items then
-                    local part, rest = {}, {}
                     for i, it in ipairs(e.items) do
                         if i <= room then table.insert(part, it) else table.insert(rest, it) end
                     end
+                    -- (no limit: and weight for them left in it, the batch's sent counted - KnoxDrag.weightRoom)
+                    if not KnoxDrag.weightRoom(L, {items = part}, player) then room = 0 end
+                end
+                if room > 0 and room < #e.items then
                     KnoxGrid.setStackId(part, t.item:getModData().knoxS)
                     t.joinN = (t.joinN or 0) + #part
                     KnoxDrag.moveTo(player, {item = part[1], items = part, w = e.w, h = e.h, fromBody = e.fromBody},
@@ -200,7 +208,7 @@ end
 local function placeIn(views, e, player)
     for _, v in ipairs(views) do
         if takes(v, e, player) then
-            local t = KnoxDrag.joinTarget(v.layout, e)
+            local t = KnoxDrag.weightRoom(v.layout, e, player) and KnoxDrag.joinTarget(v.layout, e)
             if t then
                 KnoxGrid.setStackId(e.items, t.item:getModData().knoxS)
                 t.joinN = (t.joinN or 0) + #e.items
@@ -212,7 +220,7 @@ local function placeIn(views, e, player)
         local L = v.layout
         if e.item:getContainer() ~= L.container and KnoxDrag.allowedIn(e.item, L.container, player) then
             -- onto a same-type stack with room (it joins it), else a free place
-            local x, y, r, joined = KnoxDrag.settle(L, e)
+            local x, y, r, joined = KnoxDrag.settle(L, e, player)
             if x then
                 if not joined then
                     local w, h = KnoxGrid.dims(e, r)
@@ -278,6 +286,7 @@ local function couldHold(container, player, w, h)
         return false
     end
     local cols, rows = KnoxGrid.getSize(container, player)
+    if KnoxGrid.free() then return math.min(w, h) <= cols end   -- (no limit: the grid grows down, only its width counts)
     return (w <= cols and h <= rows) or (h <= cols and w <= rows)
 end
 
@@ -382,16 +391,29 @@ local function keyRings(player)
 end
 
 --- Shift+click on a key (Falco, 2026-10-19): onto a key ring the character
---- carries, when it is not on one yet. @return boolean it went
+--- carries, when it is not on one of theirs yet - a key on a ring found in the world
+--- goes onto the character's own too (the author, 2026-11-13). Of several rings, one
+--- that holds a key of the same kind comes first. @return boolean it went
 local function toKeyRing(e, view, player)
     if not instanceof(e.item, "Key") then return false end
     local from = e.item:getContainer()
-    local holder = from and from:getContainingItem()
-    if holder and string.find(holder:getFullType(), "KeyRing", 1, true) then return false end
-    local rings = {}
-    for _, inv in ipairs(keyRings(player)) do
-        if inv ~= from and inv:isItemAllowed(e.item) then table.insert(rings, {layout = KnoxGrid.build(inv, player)}) end
+    local own = keyRings(player)
+    for _, inv in ipairs(own) do
+        if inv == from then return false end
     end
+    local kind = e.item:getFullType()
+    local rings, other = {}, {}
+    for _, inv in ipairs(own) do
+        if inv:isItemAllowed(e.item) then
+            local list = other
+            local items = inv:getItems()
+            for i = 0, items:size() - 1 do
+                if items:get(i):getFullType() == kind then list = rings break end
+            end
+            table.insert(list, {layout = KnoxGrid.build(inv, player)})
+        end
+    end
+    for _, v in ipairs(other) do table.insert(rings, v) end
     if #rings == 0 then return false end
     return moveInto(rings, e, player, KnoxDrag.sourceOf(e, view), true)
 end

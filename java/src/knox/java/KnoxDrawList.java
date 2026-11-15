@@ -1,5 +1,7 @@
 package knox.java;
 
+import se.krka.kahlua.vm.KahluaTable;
+
 import java.util.ArrayList;
 import java.util.function.Consumer;
 
@@ -33,7 +35,7 @@ import zombie.ui.UIFont;
 public class KnoxDrawList {
 
     static final int RECT = 0, ASPECT = 1, COL = 2, KNOX_TEXT = 3, TEXT = 4, TEXT_CENTRE = 5, TEXT_RIGHT = 6,
-        SCALED = 7, PLAIN = 8, ITEM_ICON = 9;
+        SCALED = 7, PLAIN = 8, ITEM_ICON = 9, SUB = 10;
     static final int STRIDE = 9;
     static final int MAX_OPS = 4096;
 
@@ -143,6 +145,16 @@ public class KnoxDrawList {
         l.push(KNOX_TEXT, null, style, text, x - originX(l.owner), y - originY(l.owner), size, r, g, b, a, 0, 0);
     }
 
+    /**
+     * A part of a texture (KnoxTiles' glow, 2026-11-13): UIElement.DrawSubTextureRGBA is not
+     * caught by a patch, Knox writes its own such draws here. `c` - the colour's Lua table.
+     */
+    public static void addSub(UIElement u, Texture t, KahluaTable c, double subY, double subH,
+                              double x, double y, double w, double h, double a) {
+        KnoxDrawList l = rec;
+        if (l != null && skip == 0) l.push(SUB, u, t, c, subY, subH, x, y, w, h, a, 0, 0);
+    }
+
     void play() {
         for (int i = 0; i < n; i++) {
             int k = i * STRIDE;
@@ -179,6 +191,13 @@ public class KnoxDrawList {
                 case PLAIN:
                     u.DrawTexture((Texture) obj[i], num[k], num[k + 1], num[k + 2]);
                     break;
+                case SUB: {
+                    Texture t = (Texture) obj[i];
+                    KahluaTable c = (KahluaTable) obj2[i];
+                    u.DrawSubTextureRGBA(t, 0, num[k], t.getWidth(), num[k + 1], num[k + 2], num[k + 3], num[k + 4],
+                        num[k + 5], KnoxTiles.num(c, "r", 0), KnoxTiles.num(c, "g", 0), KnoxTiles.num(c, "b", 0), num[k + 6]);
+                    break;
+                }
                 case ITEM_ICON:
                     u.DrawItemIcon((InventoryItem) obj[i], num[k], num[k + 1], num[k + 2], num[k + 3], num[k + 4]);
                     break;

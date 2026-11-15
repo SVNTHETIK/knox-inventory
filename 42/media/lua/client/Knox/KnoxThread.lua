@@ -34,7 +34,8 @@ function KnoxThread.sourceRect(item, skipView)
         for _, sl in ipairs(s.equipment.slots or {}) do
             if sl:getIsVisible() then
                 for _, it in ipairs(sl:items()) do
-                    if it == item then return absRect(sl) end
+                    -- (held in both hands: from the both hands' slot, not the faint hands)
+                    if it == item and (sl.kind ~= "hand" or sl:liveItem() == item) then return absRect(sl) end
                 end
             end
         end

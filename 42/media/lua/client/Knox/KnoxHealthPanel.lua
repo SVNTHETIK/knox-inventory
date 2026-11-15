@@ -1,51 +1,248 @@
--- The Knox screen's Health tab (version 1.0; redesigned 2026-10-19 after the author:
--- "too loaded - only the character and a pile of numbers to get lost in; simpler,
--- intuitive, interactive, visually varied, every wound its own icons changing with
--- its state", squares as everywhere in Knox):
---   TOP     the overall health in a square (its frame fills as the health), how it
---           goes, and only the effects that are not right as plates with the game's
---           icons ("+N fine" for the rest);
---   BODY    the 3D character, and on it a square badge per wound (KnoxHealthWounds):
---           its icon (the kind, with the state over it - a bandage, stitches, a
---           splint...), its frame filling as it heals, a bleeding's pulsing;
---   RIGHT   the chosen wound's card - its way of treatment as squares (where it is
---           now in sand), what it needs and whether it is carried, one button for
---           what to do now; with nothing chosen: what matters now (the wounds to see
---           to, the most urgent first, a button each) and what is healing;
---   KIT     at the bottom: what the character carries that treats - dragged onto
---           the body, or clicked with a wound chosen.
--- The mouse: a click chooses (a badge, a part on the model, a row); the right button
--- opens the part's menu (KnoxHealthCare); Shift + click treats at once.
--- The data: KnoxHealthData, KnoxHealthWounds; the treatments: KnoxHealthCare; the model:
--- KnoxHealthModel.
+-- The Knox screen's Health tab, 1.0 (the author's mockup .claude/mockups/health/health_v3.html,
+-- 2026-11-10: "a new Health tab after the mockup"; the mockup stays the design's source - which of
+-- its functions is which part of this file: .claude/mockups/health/SYNC.md):
+--   STATE  the overall health - the number, the cardiogram, how it goes, what each wound took -,
+--          the moodles in the game's icons in Knox's frames, the body's needs;
+--   BODY   the 3D character lit where it is hurt (KnoxHealthModel, the look's colour); the part
+--          under the mouse: its card beside the body on a leader line;
+--   TABLE  what matters now (a row per hurt part, the most urgent first), or the part put on the
+--          table: its wound seen from above (KnoxWoundArt), its steps of treatment in medical order,
+--          the quick treatment and the game's own menu;
+--   KIT    what the character carries that treats, by group: under the mouse the parts it would
+--          treat light up, the box beside says what it is for.
+-- A step is the game's own timed action, played as a mini-game on the wound's picture while it
+-- runs (KnoxHealthGames). Nothing is dragged onto the body any more (the author, 2026-11-10): a
+-- click on the kit's thing does the step of the part on the table, a double click takes a pill.
+-- The mouse: a click puts a part on the table, Shift + click treats it quickly, the right button
+-- opens the game's menu (a part's, a thing's), held and dragged on the body it turns the character.
+-- The data: KnoxHealthData, KnoxHealthWounds; treating: KnoxHealthCare, KnoxHealthGames; the
+-- model: KnoxHealthModel; the pictures: Java KnoxWoundCanvas.
 
 require "ISUI/ISPanel"
 require "Knox/KnoxTheme"
-require "Knox/KnoxDrag"
-require "Knox/KnoxTooltip"
 require "Knox/KnoxHealthCU"
 require "Knox/KnoxHealthData"
 require "Knox/KnoxHealthCare"
 require "Knox/KnoxHealthModel"
 require "Knox/KnoxHealthWounds"
+require "Knox/KnoxHealthGames"
 
-KnoxHealthPanel = ISPanel:derive("KnoxHealthPanel")
+KnoxHealthPanel = KnoxHealthPanel or ISPanel:derive("KnoxHealthPanel")
 local P = KnoxHealthPanel
 local T = KnoxTheme
 local H = KnoxHealthData
 local Care = KnoxHealthCare
 local Model = KnoxHealthModel
-local Wd = KnoxHealthWounds
+local W = KnoxHealthWounds
+local G = KnoxHealthGames
 
-local MINUS = "-"                -- (the Knox fonts' own minus is the hyphen)
-local RAQUO = string.char(187)   -- »
-local DRAG_PX = 5
+local DOT = " " .. string.char(183) .. " "
+local DEG = string.char(176)
+local TIMES = string.char(215)
+local MINUS = "-"            -- (the Knox fonts' own minus is the hyphen)
+local LSAQUO, RSAQUO = string.char(8249), string.char(8250)   -- ‹ ›
+local REFRESH_MS = 250       -- the data read anew (the frame draws what was read)
+local DBL_MS = 400           -- a double click on the kit
+local ROT_PX = 40            -- the mouse's way for an eighth of a turn of the character
+local WF = 9                 -- KnoxWoundCanvas.WORD_FIELDS
 
-local function clamp(v, a, b) return math.max(a, math.min(b, v)) end
+-- the pictures (KnoxWoundCanvas ids and views)
+local PIC_TABLE, PIC_CARD, PIC_ECG, PIC_ROW = G.CANVAS, 2, 3, 100
+local VIEW_TABLE, VIEW_MINI, VIEW_THUMB = 0, 1, 2
+
+local function clamp(v, a, b)
+    if v < a then return a end
+    if v > b then return b end
+    return v
+end
 
 local function tx(key, ...) return getText("IGUI_KnoxHP_" .. key, ...) end
 
--- The panel ---------------------------------------------------------------------------
+local function hexc(h)
+    return {r = math.floor(h / 65536) / 255, g = (math.floor(h / 256) % 256) / 255, b = (h % 256) / 255}
+end
+-- the mockup's colours that are not Knox's own (T.color has the rest)
+local X = {
+    med = hexc(0x3b2427), mint = hexc(0x8fd0b0), grid = hexc(0x141717), ecg = hexc(0x070808),
+    pip = hexc(0x232727), litBg = hexc(0x17170f), rowLit = hexc(0x141512), fitBg = hexc(0x4a3a2c),
+    now = hexc(0xf1e3b2), mainHot = hexc(0xe2d3a0), timeBar = hexc(0x6e7370), black = hexc(0x000000),
+}
+
+-- the character turned by the right button: the directions in order
+local DIRS = {IsoDirections.S, IsoDirections.SW, IsoDirections.W, IsoDirections.NW,
+              IsoDirections.N, IsoDirections.NE, IsoDirections.E, IsoDirections.SE}
+
+-- a step's picture when no thing of it is to hand (done, or none carried)
+local STEP_TEX = {unb = "Item_BandageDirty", tw = "Item_Tweezers", bullet = "Item_Tweezers", burn = "Item_Rag",
+    clean = "Item_AlcoholWipes", stitch = "Item_SutureNeedle", bandage = "Item_Bandage", splint = "Item_Splint"}
+local stepTexCache = {}
+local function stepTex(id)
+    local t = stepTexCache[id]
+    if t == nil then
+        t = getTexture(STEP_TEX[id] or "Item_Bandage") or false
+        stepTexCache[id] = t
+    end
+    return t or nil
+end
+
+-- Sizes: the mockup's pixels at 1080p (a 48 px cell) times the screen's cell -----------------
+
+local K = 1
+local function px(v) return math.floor(v * K + 0.5) end
+
+local F = {}   -- the fonts, by the mockup's style and size
+local function font(style, size)
+    local s = size * K
+    if T.javaFonts then
+        if s > 44 then return T.makeBigFont(style, s) end
+        return T.makeFont(style, s)
+    end
+    -- (a language Knox's atlases can't write: the game's fonts)
+    if size >= 40 then return UIFont.Large end
+    if size >= 19 then return T.fontHeader end
+    if style == "body" then return size >= 15 and T.fontText or T.fontTile end
+    return size >= 14 and T.fontCaps or T.fontTile
+end
+
+local wordFonts = {}   -- the pictures' words' fonts, by weight and size
+
+--- The tab's places and fonts (made again when the screen's cell or the panel's size changes).
+function P:metrics()
+    K = T.cell / 48
+    local w, h = self:getWidth(), self:getHeight()
+    local m = self.m
+    if m and m.w == w and m.h == h and m.cell == T.cell and m.fonts == T.fontText and F.big then return m end
+    m = {w = w, h = h, cell = T.cell, fonts = T.fontText}
+    m.sw = px(372)                -- the state's width
+    m.bx, m.bw = px(384), px(468) -- the body's
+    m.rx = px(864)                -- the table and the kit
+    m.rw = w - m.rx
+    m.kh = px(276)
+    m.ky = h - m.kh
+    m.th = m.ky - px(12)
+    m.midH = h
+    F.ptitle = font("title", 24)
+    F.t26, F.t24, F.t22, F.t21, F.t20 = font("title", 26), font("title", 24), font("title", 22), font("title", 21), font("title", 20)
+    F.t18, F.t16, F.t13, F.t12 = font("title", 18), font("title", 16), font("title", 13), font("title", 12)
+    F.h18, F.h16, F.h15, F.h14, F.h13, F.h12 = font("head", 18), font("head", 16), font("head", 15), font("head", 14),
+        font("head", 13), font("head", 12)
+    F.b19, F.b17, F.b16, F.b15, F.b14, F.b13 = font("body", 19), font("body", 17), font("body", 16), font("body", 15),
+        font("body", 14), font("body", 13)
+    F.big = font("title", 78)
+    F.bigS = font("title", 50)   -- (100: three digits do not fit beside the cardiogram at 78)
+    wordFonts = {}
+    self.pics = knoxWoundTex ~= nil and knoxWoundScene ~= nil and (knoxWoundOk == nil or knoxWoundOk() == true)
+    self.m = m
+    self.dirty = true
+    return m
+end
+
+-- Drawing helpers (the layout kit's, with their bands and options filled in, not made anew) ----
+
+local R4 = {0, 0, 0, 0}
+local LO, SO = {}, {}
+
+--- Text in the band x, y, w, h (T.label): align "left" (default), "right", "centre".
+local function label(ui, s, x, y, w, h, c, f, align, a)
+    R4[1], R4[2], R4[3], R4[4] = x, y, w, h
+    LO.font, LO.align, LO.a = f, align, a
+    return T.label(ui, s, R4, c, LO)
+end
+
+--- Letter-spaced text (the mockup's caps with letter-spacing): align "left" or "centre".
+local function spaced(ui, s, x, y, w, h, c, f, ls, align, a)
+    R4[1], R4[2], R4[3], R4[4] = x, y, w, h
+    SO.font, SO.ls, SO.align, SO.a = f, ls, align, a
+    return T.spaced(ui, s, R4, c, SO)
+end
+
+local function panel(ui, x, y, w, h)
+    T.rect(ui, x, y, w, h, T.color.window, T.bgAlpha())
+    T.border(ui, x, y, w, h, T.color.border)
+end
+
+-- a 2 px dashed frame (an empty step's slot)
+local function dashed(ui, x, y, w, h, c, a)
+    local d, g = px(6), px(4)
+    local t = math.max(1, px(2))
+    for xx = x, x + w - 1, d + g do
+        local dw = math.min(d, x + w - xx)
+        T.rect(ui, xx, y, dw, t, c, a)
+        T.rect(ui, xx, y + h - t, dw, t, c, a)
+    end
+    for yy = y, y + h - 1, d + g do
+        local dh = math.min(d, y + h - yy)
+        T.rect(ui, x, yy, t, dh, c, a)
+        T.rect(ui, x + w - t, yy, t, dh, c, a)
+    end
+end
+
+-- a 2 px frame of any width (T.tileFrame is 2 px)
+local function frame2(ui, x, y, w, h, c, a)
+    T.tileFrame(ui, x, y, w, h, c, a)
+end
+
+-- an angle ">" of 2 px dots, its tip at cx, cy (the steps' arrows)
+local function chevron(ui, cx, cy, s, c, a)
+    for i = 0, s do
+        T.rect(ui, cx - s + i, cy - s + i, 2, 2, c, a)
+        T.rect(ui, cx - s + i, cy + s - i, 2, 2, c, a)
+    end
+end
+
+-- a tick on a square of side s (a done step's mark)
+local function tick(ui, x, y, s, c)
+    local u = s / 18
+    local x0, y0 = x + math.floor(4 * u + 0.5), y + math.floor(8 * u + 0.5)
+    local a, b = math.floor(3 * u + 0.5), math.floor(7 * u + 0.5)
+    for i = 0, a do T.rect(ui, x0 + i, y0 + i, 2, 2, c) end
+    for i = 0, b do T.rect(ui, x0 + a + i, y0 + a - i, 2, 2, c) end
+end
+
+-- a cross on a square of side s (a done step's mark under the mouse: a click undoes it)
+local function cross(ui, x, y, s, c)
+    local u = s / 18
+    local x0, y0 = x + math.floor(4 * u + 0.5), y + math.floor(4 * u + 0.5)
+    local n = math.floor(8 * u + 0.5)
+    for i = 0, n do
+        T.rect(ui, x0 + i, y0 + i, 2, 2, c)
+        T.rect(ui, x0 + n - i, y0 + i, 2, 2, c)
+    end
+end
+
+-- a triangle (the trend's: Knox's fonts have no arrows), its box x, y, s wide
+local function triangle(ui, x, y, s, up, c)
+    local hgt = math.max(2, math.floor(s * 0.6 + 0.5))
+    for i = 0, hgt - 1 do
+        local k = up and (i + 1) / hgt or (1 - i / hgt)
+        local rw = math.max(1, math.floor(s * k + 0.5))
+        T.rect(ui, x + math.floor((s - rw) / 2), y + i, rw, 1, c)
+    end
+end
+
+-- The places the mouse can be on (a pool: filled each frame, no tables made) -----------------
+
+local function hit(self, kind, x, y, w, h, a, b)
+    local n = self.nHits + 1
+    self.nHits = n
+    local r = self.hitPool[n]
+    if not r then
+        r = {}
+        self.hitPool[n] = r
+    end
+    r.kind, r.x, r.y, r.w, r.h, r.a, r.b = kind, x, y, w, h, a, b
+    return r
+end
+
+local function hitAt(self, x, y)
+    for i = self.nHits, 1, -1 do
+        local r = self.hitPool[i]
+        if x >= r.x and y >= r.y and x < r.x + r.w and y < r.y + r.h then return r end
+    end
+    return nil
+end
+
+-- The panel ---------------------------------------------------------------------------------
 
 function P:new(x, y, w, h, playerNum, screen)
     local o = ISPanel:new(x, y, w, h)
@@ -55,10 +252,10 @@ function P:new(x, y, w, h, playerNum, screen)
     o.playerNum = playerNum
     o.screen = screen
     o.anim = {}
-    o.st = {}
-    o.hits = {}
-    o.scroll, o.scrollTo = 0, 0
-    o.openMs = getTimestampMs()
+    o.hitPool, o.nHits = {}, 0
+    o.listScroll = 0
+    o.view = {}
+    o.dirty = true
     return o
 end
 
@@ -70,10 +267,11 @@ function P:createChildren()
     self.model = Model.create(self)
 end
 
---- Shown again (the tab chosen): the columns come up anew.
+--- Shown again (the tab chosen): read anew, nothing under the mouse yet.
 function P:shown()
-    self.openMs = getTimestampMs()
-    self.press = nil
+    self.dirty = true
+    self.pressKind, self.rmbOn = nil, nil
+    self.hvKind = nil
 end
 
 --- A value on its way to `target`: it moves over a moment instead of jumping.
@@ -92,866 +290,1326 @@ function P:ease(key, target, ms)
     return s.v
 end
 
---- State kept with a thing drawn (rolling numbers, sliding text).
-function P:state(key)
-    local s = self.st[key]
-    if not s then
-        s = {}
-        self.st[key] = s
+-- The data (read every quarter of a second; the frame only draws it) ----------------------------
+
+local function itemName(item)
+    return item:getDisplayName() or item:getName() or ""
+end
+
+-- the bag a thing lies in (nil: in the pockets), and the chain of bags' names
+local function bagOf(item)
+    local c = item:getContainer()
+    return c and c:getContainingItem() or nil
+end
+
+local function bagChain(item)
+    local names = {}
+    local bag = bagOf(item)
+    local n = 0
+    while bag and n < 4 do
+        names[#names + 1] = itemName(bag)
+        bag = bagOf(bag)
+        n = n + 1
     end
-    return s
+    if #names == 0 then return tx("InPockets") end
+    return tx("InChain", table.concat(names, ", "))
 end
 
-function P:hit(kind, x, y, w, h, data)
-    data = data or {}
-    data.kind, data.rect = kind, {x, y, w, h}
-    table.insert(self.hits, data)
-    return data
+-- the moodles' levels (the pulse is made from them)
+local function moodLevel(player, id)
+    local t = MoodleType[id]
+    if not t then return 0 end
+    local m = player:getMoodles()
+    local ok, v = pcall(m.getMoodleLevel, m, t)
+    return ok and tonumber(v) or 0
 end
 
-function P:hitAt(x, y)
-    for i = #self.hits, 1, -1 do
-        local h = self.hits[i]
-        if T.inRect(x, y, h.rect) and not (h.clip and not T.inRect(x, y, h.clip)) then return h end
-    end
-    return nil
+local function decimal(s)
+    return (string.gsub(s, "%.", tx("Decimal")))
 end
 
--- the columns' coming up when the tab opens: alpha and how far still below
-local function intro(self, delay)
-    local t = (getTimestampMs() - self.openMs - delay) / 320
-    local k = clamp(T.anim(t), 0, 1)
-    k = 1 - (1 - k) * (1 - k) * (1 - k)
-    return k, math.floor((1 - k) * T.pad * 1.5 + 0.5)
+-- does a step want a thing (unb is by hand; glass by hand too, a tool better)?
+local function needsItem(id)
+    return id ~= "unb"
 end
 
---- The fonts and sizes from the cell (again when the screen's cell or size changes).
-function P:metrics()
-    local W, Hh = self:getWidth(), self:getHeight()
-    if self.mCell == T.cell and self.mFonts == T.javaFonts and self.mW == W and self.mH == Hh then return self.m end
-    local c = T.cell
-    local m = {}
-    m.c, m.pad = c, T.pad
-    m.gap = self.screen and self.screen.margin or math.floor(c * 0.42 + 0.5)
-    m.big = T.javaFonts and T.makeFont("title", c * 0.62) or UIFont.Large
-    m.topH = math.floor(c * 1.35 + 0.5)
-    m.tile = math.floor(c * 1.0 + 0.5)
-    m.kitH = T.fontH(T.fontCaps) + math.floor(T.pad * 0.6) + m.tile
-    m.midY = m.topH + m.gap
-    m.midH = Hh - m.midY - m.gap - m.kitH
-    m.rw = clamp(math.floor(W * 0.36 + 0.5), c * 7, c * 10)
-    m.bw = W - m.rw - m.gap
-    m.rx = m.bw + m.gap
-    m.badge = math.max(18, math.floor(c * 0.6 + 0.5))
-    self.m, self.mCell, self.mFonts, self.mW, self.mH = m, T.cell, T.javaFonts, W, Hh
-    return m
-end
-
-local function panelBg(ui, x, y, w, h, a)
-    T.rect(ui, x, y, w, h, T.color.window, T.bgAlpha() * a)
-    T.border(ui, x, y, w, h, T.color.border, a)
-end
-
---- A section's title: dim capitals and a line after them to the right edge.
-local function section(ui, text, x, y, w, a)
-    local f = T.fontCaps
-    local s = T.upper(text)
-    T.text(ui, s, x, y, T.color.dim, f, a)
-    local lw = T.measure(f, s)
-    local ly = y + math.floor(T.fontH(f) / 2)
-    if x + lw + T.pad < x + w then T.rect(ui, x + lw + T.pad, ly, w - lw - T.pad, 1, T.color.border, a) end
-    return T.fontH(f) + math.floor(T.pad * 0.6)
-end
-
--- A square frame that fills clockwise from the top left as `frac` goes 0..1 (the
--- health, a wound's healing): the Knox squares' answer to a ring.
-local function squareProgress(ui, x, y, s, th, frac, c, a)
-    frac = clamp(frac, 0, 1)
-    if frac <= 0 then return end
-    local side = s - th
-    local len = side * 4 * frac
-    local function seg(dx0, dy0, w, h) T.rect(ui, dx0, dy0, w, h, c, a) end
-    local l = math.min(len, side)
-    seg(x, y, l + th, th)
-    len = len - side
-    if len > 0 then l = math.min(len, side) seg(x + s - th, y, th, l + th) len = len - side end
-    if len > 0 then l = math.min(len, side) seg(x + s - th - l, y + s - th, l + th, th) len = len - side end
-    if len > 0 then l = math.min(len, side) seg(x, y + s - th - l, th, l + th) end
-end
-
---- A wound's icon in a square: its base, the state over it, a poultice's leaf.
-local function woundIcon(ui, base, overlay, x, y, s, a, poultice)
-    local inset = math.floor(s * 0.12)
-    local is = s - inset * 2
-    local tb = Wd.icon(base)
-    if tb then ui:drawTextureScaled(tb, x + inset, y + inset, is, is, a, 1, 1, 1) end
-    local to = Wd.icon(overlay)
-    if to then ui:drawTextureScaled(to, x + inset, y + inset, is, is, a, 1, 1, 1) end
-    if poultice then
-        local tp = Wd.icon("o_poultice")
-        if tp then ui:drawTextureScaled(tp, x + inset, y + inset, is, is, a, 1, 1, 1) end
-    end
-end
-
--- Frame -------------------------------------------------------------------------------
-
-function P:prerender()
-    local player = self:player()
-    if not player then return end
-    local m = self:metrics()
-    self.hits = {}
-    self.mx, self.my = self:getMouseX(), self:getMouseY()
-    self.hot = self:isMouseOver() or (self.model ~= nil and self.model:isMouseOver())
-    local menu = getPlayerContextMenu(self.playerNum)
-    self.menuOpen = menu ~= nil and menu:isAnyVisible()
-    local W = self:getWidth()
-
-    self.wounds = Wd.list(player, function(bp) return self:quickSteps(player, bp) end)
-    -- the chosen wound gone (healed, taken off): the next one of its part, or none
-    if self.selWound and not self:wound(self.selWound) then
-        local nextW
-        for _, w in ipairs(self.wounds) do if w.index == self.selPart then nextW = w break end end
-        self.selWound = nextW and nextW.id or nil
-        if not nextW then self.selPart = nil end
-    end
-
-    local aT, dT = intro(self, 0)
-    local aB, dB = intro(self, 60)
-    local aR, dR = intro(self, 120)
-    local aK, dK = intro(self, 160)
-    self:drawTop(player, m, 0, dT, W, m.topH, aT)
-    panelBg(self, 0, m.midY + dB, m.bw, m.midH - dB, aB)
-    self:drawBodyBack(player, m, 0, m.midY + dB, m.bw, m.midH - dB, aB)
-    panelBg(self, m.rx, m.midY + dR, m.rw, m.midH - dR, aR)
-    self:drawSide(player, m, m.rx, m.midY + dR, m.rw, m.midH - dR, aR)
-    self:drawKit(player, m, 0, self:getHeight() - m.kitH + dK, W, m.kitH, aK)
-    self:updateModel(player)
-end
-
-function P:render()
-    local player = self:player()
-    if not player then return end
+--- Reads what the tab shows (now and then, or at once after a change).
+function P:refresh(player, force)
+    local now = getTimestampMs()
+    if not force and not self.dirty and self.D and now - (self.dataMs or 0) < REFRESH_MS then return self.D end
+    self.dirty = false
+    self.dataMs = now
     local m = self.m
-    if not m then return end
-    local aB = intro(self, 60)
-    self:drawBadges(player, m, aB)
-    self:drawFloat(player, m)
-    -- what is under the mouse, for the next frame's lights
-    local hv = (self.hot and not self.menuOpen) and self:hitAt(self.mx, self.my) or nil
-    if self.menuOpen and self.hover then hv = self.hover end
-    self.hover = hv
-    if hv and hv.kind == "kit" and not KnoxDrag.isActive() and not self.menuOpen then
-        KnoxTooltip.want(hv.group.item, self.playerNum)
+    local D = {}
+    D.recs, D.byIndex = W.parts(player)
+    local items = Care.reachable(player)
+    local counts = {}
+    for _, it in ipairs(items) do
+        local ft = it:getFullType()
+        counts[ft] = (counts[ft] or 0) + 1
     end
-end
+    D.items = items
 
-function P:wound(id)
-    for _, w in ipairs(self.wounds or {}) do if w.id == id then return w end end
-    return nil
-end
+    -- the words that stay
+    D.tState, D.tBody, D.tKit = T.upper(tx("State")), T.upper(tx("Body")), T.upper(tx("Kit"))
+    D.tHealth, D.tOf, D.tPulse = T.upper(tx("Health")), tx("OfHundred"), T.upper(tx("Pulse"))
+    D.tEffects, D.tOrganism = T.upper(tx("Effects")), T.upper(tx("Organism"))
+    D.tList, D.tListNote, D.tKitNote = T.upper(tx("ListTitle")), tx("ListNote"), tx("KitNote")
+    D.tNext, D.tNothingToDo, D.tStepNone = tx("Next"), tx("NothingToDo"), tx("StepNone")
+    D.tToTableGo, D.tNoWounds, D.tNoWoundsSub = T.upper(tx("ToTableGo")), T.upper(tx("NoWoundsTitle")), tx("NoWoundsSub")
+    D.tBack = LSAQUO .. " " .. T.upper(tx("AllWounds"))
+    D.tPartHp, D.tOfShort = T.upper(tx("PartHp")), " " .. tx("OfHundred")
+    D.tQuick, D.tAll, D.tNothing = T.upper(tx("QuickTreat")), T.upper(tx("BtnAll")), T.upper(tx("BtnNothing"))
+    D.tPlaying, D.tDoing = tx("StepPlaying"), tx("StepDoing")
+    D.tHoverPart, D.tOnTable = tx("HoverPart"), tx("OnTable") .. " "
+    D.tCardNone, D.tOneWound = tx("CardNone"), tx("OneWound")
+    D.tKeyLmb, D.tKeyShift, D.tToTable, D.tQuickShort = tx("KeyLmb"), tx("KeyShiftLmb"), tx("ToTable"), tx("QuickShort")
+    D.tGameReady, D.tGameTime = T.upper(tx("GameReady")), T.upper(tx("GameTime"))
+    D.tIdle = tx(isClient() and "GameIdleMp" or "GameIdle")
+    D.tHowTitle = T.upper(tx("HowTitle"))
+    if not self.howLines or self.howW ~= m.rw then
+        self.howW = m.rw
+        local lines = {}
+        local ww = m.rw - px(628) - px(16) - px(32)
+        for i = 1, 4 do
+            for _, l in ipairs(T.wrap(tx("HowText" .. i), F.b15, ww)) do lines[#lines + 1] = l end
+        end
+        self.howLines = lines
+    end
+    -- (the parts' names, for the card of a part with nothing wrong)
+    if not self.partNames then
+        local names = {}
+        local bps = player:getBodyDamage():getBodyParts()
+        for i = 0, bps:size() - 1 do names[i] = T.upper(H.partName(bps:get(i))) end
+        self.partNames = names
+    end
 
--- TOP -------------------------------------------------------------------------------------
-
-function P:statusText(player)
-    local ok, s = pcall(function()
-        local p = Care.carePanel(player)
-        return p and p.healthPanel and p.healthPanel.javaObject and p.healthPanel.javaObject:getDamageStatusString()
-    end)
-    return ok and s or nil
-end
-
-function P:drawTop(player, m, x, y, w, h, a)
-    local C = T.color
-    local pad = m.pad
-    panelBg(self, x, y, w, h, a)
-    -- the health: a square, its frame filling as it, the number in it
-    local health = player:getBodyDamage():getHealth()
-    local hpc = H.hpColor(health)
-    local s = h - pad * 2
-    local sx, sy = x + pad, y + pad
-    local th = math.max(3, math.floor(s * 0.09))
-    T.rect(self, sx, sy, s, s, C.header, a)
-    T.border(self, sx, sy, s, s, C.tileEdge, a)
-    local frac = clamp(self:ease("hpSq", health / 100, 160), 0, 1)
-    squareProgress(self, sx, sy, s, th, frac, hpc, a)
-    local num = tostring(math.max(0, math.floor(self:ease("hp", health, 140) + 0.5)))
-    local nw = T.measure(m.big, num)
-    T.rollNumber(self, self:state("hpNum"), num, sx + math.floor((s - nw) / 2), sy + math.floor((s - T.fontH(m.big)) / 2),
-        nw, T.fontH(m.big), hpc.r, hpc.g, hpc.b, a, m.big)
-    -- its words: the game's state, how it goes
-    local tx0 = sx + s + pad
-    T.caps(self, tx("Health"), tx0, sy, C.bright, T.fontHeader, a)
-    local status = self:statusText(player) or ""
+    -- the overall health, its pulse, how it goes, what each wound took
+    local hp = math.floor(player:getBodyDamage():getHealth() + 0.5)
+    D.hp, D.hpText = hp, tostring(hp)
+    local bleeding, infected, open = false, false, false
+    for _, r in ipairs(D.recs) do
+        if r.look.style == "bleed" or r.bleeding then bleeding = true end
+        if r.look.style == "infect" or r.infected then infected = true end
+        if not r.look.heal and not r.look.calm then open = true end
+    end
+    -- (the pulse: the mockup's 104 bleeding, 86 calm - made from the moodles in the game)
+    local bpm = 72 + (bleeding and 22 or 0) + 5 * moodLevel(player, "PANIC") + 3 * moodLevel(player, "PAIN")
+        + 2 * moodLevel(player, "STRESS") + math.floor((100 - hp) * 0.2)
+    D.bpm = clamp(bpm, 60, 160)
+    D.bpmText = tostring(D.bpm)
+    D.ecgRgb = bleeding and W.rgbInt(W.COL.bleed) or W.rgbInt(W.COL.sand)
     local pace = H.healthPace(player)
-    local paceText, paceC = "", C.dim
-    if pace and pace > 0.05 then paceText, paceC = tx("Worsening"), C.bad
-    elseif pace and pace < -0.05 then paceText, paceC = tx("Improving"), C.good
-    elseif pace then paceText = tx("PaceStable") end
-    local line2 = status
-    if paceText ~= "" then line2 = (line2 ~= "" and (line2 .. "  " .. string.char(183) .. "  ") or "") .. paceText end
-    T.text(self, line2, tx0, sy + T.fontH(T.fontHeader) + 2, paceText ~= "" and paceC or C.dim, T.fontText, a)
-
-    -- the effects that are not right, from the right edge; the rest as "+N fine"
-    local list = H.moodles(player)
-    local bad, fine = {}, 0
-    for _, e in ipairs(list) do
-        if e.good == 2 then table.insert(bad, e) else fine = fine + 1 end
+    if bleeding then
+        D.trendArrow, D.trendUp, D.trendC = true, false, W.COL.bleed
+        D.trendMain = T.upper(tx("TrendWorse"))
+        D.trendRest = (pace and pace > 0.05) and (DOT .. tx("TrendBleed", MINUS .. math.max(1, math.floor(pace + 0.5)))) or nil
+    elseif infected then
+        D.trendArrow, D.trendUp, D.trendC = true, false, W.COL.infect
+        D.trendMain, D.trendRest = T.upper(tx("TrendSlow")), DOT .. tx("TrendInfect")
+    elseif #D.recs > 0 or hp < 100 then
+        D.trendArrow, D.trendUp, D.trendC = true, true, W.COL.mint
+        D.trendMain = T.upper(tx("TrendBetter"))
+        D.trendRest = #D.recs > 0 and (DOT .. tx(open and "TrendOpen" or "TrendClosed")) or nil
+    else
+        D.trendArrow, D.trendUp, D.trendC = false, true, W.COL.mint
+        D.trendMain, D.trendRest = T.upper(tx("TrendFine")), DOT .. tx("TrendNoWounds")
     end
-    local ch = math.floor(h * 0.5)
-    local cy = y + math.floor((h - ch) / 2)
-    local right = x + w - pad
-    local leftLimit = tx0 + math.max(T.measure(T.fontHeader, T.upper(tx("Health"))), T.measure(T.fontText, line2)) + pad * 2
-    local f = T.fontTile
-    local function plate(text, tex, tone, hitData)
-        local s2 = T.upper(text)
-        local is = ch - 6
-        local pw = (tex and is + 6 or 0) + T.measure(f, s2) + 14
-        if right - pw < leftLimit then return false end
-        local px = right - pw
-        T.rect(self, px, cy, pw, ch, C.header, a)
-        T.border(self, px, cy, pw, ch, tone and T.mix(C.tileEdge, tone, 0.6) or C.tileEdge, a)
-        local ix = px + 7
+    -- the loss bar: the health lost shared by how much each part lost
+    local lost = math.max(0, 100 - hp)
+    local sum = 0
+    for _, r in ipairs(D.recs) do sum = sum + math.max(0, 100 - r.hp) end
+    D.loss = {}
+    if lost > 0 and sum > 0 then
+        for _, r in ipairs(D.recs) do
+            local part = lost * math.max(0, 100 - r.hp) / sum
+            if part > 0 then
+                D.loss[#D.loss + 1] = {index = r.index, frac = part / 100, c = r.look.c}
+                r.lossText = " " .. tx("LossPart", math.floor(part + 0.5), lost)
+            end
+        end
+        table.sort(D.loss, function(a, b) return a.frac > b.frac end)
+    end
+    D.lossAll = lost > 0 and tx("LossAll", lost) or tx("LossNone")
+
+    -- the looks for the model's light; the rows' words
+    D.looks = {}
+    for _, r in ipairs(D.recs) do
+        D.looks[r.index] = r.look
+        r.hpText = tostring(r.hp)
+        r.cardSub = D.tOneWound .. DOT .. tx("DepthIs", r.depth)
+        local row = {}
+        r.row = row
+        local rowW = m.rw - px(32) - px(262) - px(24) - T.measure(F.t13, r.look.tagText) - px(30)
+        row.pw = T.fit(r.title .. DOT .. r.look.words, F.b16, rowW)
+        local c = r.cur
+        if c then
+            row.next = string.lower(tx("Step_" .. c.id))
+            local it = needsItem(c.id) and Care.stepItem(items, c.id) or nil
+            local wants = needsItem(c.id) and not (c.id == "tw" and not it)
+            row.item = it
+            row.have = it and tx("HaveIt", string.lower(itemName(it))) or nil
+            row.none = wants and not it and not (c.id == "splint" and Care.stepCan(items, r.bp, "splint"))
+        end
+    end
+
+    -- the part on the table
+    local sel = self.sel
+    local rec = sel and D.byIndex[sel] or nil
+    local session = G.session(player)
+    if sel and not rec then
+        if session and self.selRec then rec = self.selRec
+        else self.sel, sel = nil, nil end
+    end
+    self.selRec = rec
+    if rec then
+        local S = {}
+        D.sel = S
+        S.tsub = T.fit(rec.title .. DOT .. rec.look.words, F.b15, m.rw - px(150) - px(140))
+        S.wn = T.upper(rec.title)
+        S.ws = T.wrap(rec.look.words, F.b16, px(280))
+        if rec.look.heal then S.wt = T.wrap(rec.healLine or "", F.b15, px(270))
+        else
+            S.wt = T.wrap(rec.depthLine or "", F.b15, px(270))
+            for _, l in ipairs(T.wrap(rec.healLine or "", F.b15, px(270))) do S.wt[#S.wt + 1] = l end
+        end
+        local steps, can, left = {}, 0, 0
+        for i, s in ipairs(rec.steps) do
+            local v = {id = s.id, i = i}
+            local it = needsItem(s.id) and Care.stepItem(items, s.id) or nil
+            local wants = needsItem(s.id) and not (s.id == "tw" and not it)
+            local have = (not wants) or it ~= nil or (s.id == "splint" and Care.stepCan(items, rec.bp, "splint"))
+            if s.done then
+                v.state = "done"
+                v.undo = Care.undoable(rec.bp, s.id)
+                v.xid = "x" .. s.id
+            elseif s.skipped then v.state = "skip"
+            elseif s == rec.cur then v.state = Care.stepCan(items, rec.bp, s.id) and "cur" or "none"
+            -- (the author 2026-11-11: the order is advice, not a lock - "in the game cleaning is not
+            -- a must before a bandage": a later step the game allows now can be done now)
+            elseif Care.stepCan(items, rec.bp, s.id) then v.state = "free"
+            else v.state = "future" end
+            if not s.done and not s.skipped then
+                left = left + 1
+                if have then can = can + 1 end
+            end
+            v.name = T.upper(tx((s.done and "StepDone_" or "Step_") .. s.id))
+            v.item = (not s.done) and it or nil
+            v.tex = stepTex(s.id)
+            if s.done then v.sub = tx("StepReady")
+            elseif s.skipped then v.sub = tx("StepSkipped")
+            elseif not wants then v.sub = tx("StepHands")
+            elseif it then
+                local n = counts[it:getFullType()] or 1
+                v.sub = string.lower(itemName(it)) .. (n > 1 and (" " .. TIMES .. n) or "")
+            elseif have then v.sub = tx("StepReady")
+            else v.sub = D.tStepNone end
+            v.sub = T.fit(v.sub, F.b14, px(132))
+            v.bad = v.state == "none"
+            steps[i] = v
+        end
+        S.steps, S.can, S.left = steps, can, left
+        local note
+        if left == 0 then note = nil
+        elseif can == left then note = tx(G.on() and "QuickGames" or "QuickAll")
+        elseif can > 0 then note = tx("QuickSome", can, left)
+        else note = tx("QuickNone") end
+        S.note = note and T.wrap(note, F.b14, px(230)) or {}
+        -- the mini-game's lines: how the hand is, the first aid
+        local names = {}
+        local shake = G.tremor(player, names)
+        S.shakeOn = shake > 0
+        S.shake = shake > 0 and tx("ShakeYes", table.concat(names, ", ")) or tx("ShakeNo")
+        S.aid = DOT .. tx("FirstAidLvl", player:getPerkLevel(Perks.Doctor))
+    end
+
+    -- the moodles (the five that matter most) and what lights with each
+    D.moods = {}
+    local ml = H.moodles(player)
+    for i = 1, math.min(5, #ml) do
+        local mo = ml[i]
+        local c = mo.good == 1 and T.color.ok or (mo.level >= 2 and T.color.bad or T.color.warn)
+        local v = {id = mo.id, name = T.fit(mo.name or "", F.b19, px(210)), desc = T.fit(mo.desc or "", F.b14, px(262)),
+                   level = mo.level, c = c, icon = H.moodleIcon(mo.icon, px(40)), parts = {}}
+        for _, r in ipairs(D.recs) do
+            if (mo.id == "BLEEDING" and r.bleeding) or (mo.id == "PAIN" and not r.look.heal)
+                    or (mo.id == "INJURED") then
+                v.parts[r.index] = true
+            end
+        end
+        D.moods[i] = v
+    end
+    -- the body's needs
+    D.org = {}
+    for _, s in ipairs(H.stats(player)) do
+        if s.id == "hunger" or s.id == "thirst" or s.id == "fatigue" then
+            D.org[#D.org + 1] = {name = s.name, frac = s.frac, value = s.value .. "%", warn = s.frac > 0.5}
+        end
+    end
+    local temp = H.temperature(player)
+    if temp then D.org[#D.org + 1] = {name = tx("Stat_temperature"), value = decimal(temp) .. DEG} end
+    D.org[#D.org + 1] = {name = tx("FirstAid"), value = tx("Level", player:getPerkLevel(Perks.Doctor))}
+    -- who and which day
+    local desc = player:getDescriptor()
+    D.who = tx("WhoDay", (desc:getForename() or "") .. " " .. (desc:getSurname() or ""),
+        math.floor(player:getHoursSurvived() / 24) + 1)
+
+    -- the kit, by group, laid out (the mockup's flex rows of 590 px)
+    D.kit = {}
+    local groups = {}
+    for _, gid in ipairs(W.GROUPS) do groups[gid] = {id = gid, title = T.upper(tx("G_" .. gid)), tiles = {}} end
+    for _, g in ipairs(Care.kit(player)) do
+        local gid = W.groupOf(g.item)
+        local list = groups[gid].tiles
+        local t = {key = g.type, g = g, item = g.item, countText = g.count > 1 and tostring(g.count) or nil,
+                   count = g.count, bag = bagOf(g.item), whole = W.whole(g.item), mood = W.pillMood(g.item),
+                   wrap = gid == "wrap", fit = {}, now = {}}
+        local anti = g.item:getType() == "Antibiotics"
+        for _, r in ipairs(D.recs) do
+            for _, s in ipairs(r.steps) do
+                if not s.done and not s.skipped and W.stepTakes(s.id, g.item) then
+                    t.fit[r.index] = true
+                    if s == r.cur then t.now[r.index] = true end
+                end
+            end
+            if anti and r.infected then t.fit[r.index] = true end
+        end
+        list[#list + 1] = t
+    end
+    local gx, gy = 0, 0
+    local maxW = 590
+    for _, gid in ipairs(W.GROUPS) do
+        local gr = groups[gid]
+        local n = math.min(#gr.tiles, math.floor((maxW - 1) / 63))
+        if n > 0 then
+            local gw = math.max(n * 63 + 1, math.ceil(T.measure(F.h13, gr.title) / K))
+            if gx > 0 and gx + gw > maxW then gx, gy = 0, gy + 102 end
+            if gy <= 102 then
+                gr.x, gr.y, gr.n = gx, gy, n
+                D.kit[#D.kit + 1] = gr
+            end
+            gx = gx + gw + 26
+        end
+    end
+    D.kitEmpty = #D.kit == 0 and tx("KitEmpty") or nil
+
+    self.D = D
+    self.hintFor = nil   -- (the kit's box made anew for the thing under the mouse)
+    return D
+end
+
+-- the kit's box for the thing under the mouse (made when it changes)
+function P:itemHint(t)
+    if self.hintFor == t.key and self.hint then return self.hint end
+    local D, m = self.D, self.m
+    local ww = m.rw - px(628) - px(16) - px(32)
+    local h = {}
+    h.name = T.upper(itemName(t.item))
+    h.count = t.count > 1 and (" " .. TIMES .. t.count) or nil
+    h.where = T.fit(bagChain(t.item), F.b14, ww)
+    h.desc = T.wrap(tx(W.descKey(t.item)), F.b16, ww)
+    if t.whole then
+        h.use, h.useC = T.wrap(tx("Take"), F.b15, ww), T.color.accent
+    else
+        local names = {}
+        for _, r in ipairs(D.recs) do
+            if t.fit[r.index] then names[#names + 1] = r.partLower .. (t.now[r.index] and "" or (" " .. tx("Later"))) end
+        end
+        if #names > 0 then h.use, h.useC = T.wrap(tx("Helps", table.concat(names, ", ")), F.b15, ww), T.color.accent
+        else h.use, h.useC = T.wrap(tx("NothingNow"), F.b15, ww), T.color.dim end
+    end
+    self.hint, self.hintFor = h, t.key
+    return h
+end
+
+-- The pictures' words (KnoxWoundCanvas: their places in the picture's pixels) --------------------
+
+local WC = {r = 1, g = 1, b = 1}
+
+local function wordFont(weight, size)
+    local wk = (weight >= 700 and 3) or (weight >= 600 and 2) or 1
+    local key = wk * 1000 + math.floor(size + 0.5)
+    local f = wordFonts[key]
+    if not f then
+        if T.javaFonts then
+            f = T.makeFont((wk == 3 and "title") or (wk == 2 and "head") or "body", size)
+        else
+            f = T.fontTile
+        end
+        wordFonts[key] = f
+    end
+    return f
+end
+
+function P:drawWords(id, ox, oy, a)
+    local t = knoxWoundTexts and knoxWoundTexts(id)
+    if not t then return end
+    local n = t.n or 0
+    for i = 0, n - 1 do
+        local b = i * WF
+        local s = t[b + 1]
+        if s and s ~= "" then
+            local x, y, rgbv, wa = t[b + 2] or 0, t[b + 3] or 0, t[b + 4] or 0, t[b + 5] or 1
+            local size, anchor, weight, ls = t[b + 6] or 10, t[b + 7] or 1, t[b + 8] or 400, t[b + 9] or 0
+            local f = wordFont(weight, size)
+            WC.r = math.floor(rgbv / 65536) / 255
+            WC.g = (math.floor(rgbv / 256) % 256) / 255
+            WC.b = (rgbv % 256) / 255
+            local capH = T.capH(f)
+            local top = oy + y - capH
+            local wa2 = wa * (a or 1)
+            if ls > 0.05 then
+                if anchor == 0 then
+                    spaced(self, s, ox + x - 1000, top, 2000, capH, WC, f, ls, "centre", wa2)
+                else
+                    local sx = ox + x
+                    if anchor < 0 then sx = sx - (T.measure(f, s) + ls * (string.len(s) - 1)) end
+                    spaced(self, s, sx, top, 0, capH, WC, f, ls, "left", wa2)
+                end
+            elseif anchor == 0 then
+                label(self, s, ox + x - 1000, top, 2000, capH, WC, f, "centre", wa2)
+            elseif anchor < 0 then
+                label(self, s, ox + x - 2000, top, 2000, capH, WC, f, "right", wa2)
+            else
+                label(self, s, ox + x, top, 0, capH, WC, f, "left", wa2)
+            end
+        end
+    end
+end
+
+-- a wound's picture in the box x, y, w, h (its frame and dark ground; the picture inside)
+function P:drawPicture(id, view, rec, x, y, w, h, a)
+    T.rect(self, x, y, w, h, T.color.screen, a)
+    if self.pics and rec then
+        knoxWoundScene(id, w - 2, h - 2, view, rec.kindN, rec.flags, rec.progress, rec.look.rgb)
+        local tex = knoxWoundTex(id)
         if tex then
-            self:drawTextureScaledAspect(tex, px + 4, cy + 3, is, is, a, 1, 1, 1)
-            ix = px + 4 + is + 5
+            self:drawTextureScaled(tex, x + 1, y + 1, w - 2, h - 2, a or 1, 1, 1, 1)
+            self:drawWords(id, x + 1, y + 1, a)
         end
-        T.inkLeft(self, s2, ix, cy, ch, tone and C.bright or C.dim, f, a)
-        if hitData then self:hit("effect", px, cy, pw, ch, hitData) end
-        right = px - 5
-        return true
     end
-    if fine > 0 then plate(tx("FineMore", fine), nil, nil, nil) end
-    for i = #bad, 1, -1 do
-        local e = bad[i]
-        local tone = e.level >= 3 and C.bad or C.warn
-        if not plate(e.name or "", H.moodleIcon(e.icon, ch), tone, {effect = e}) then break end
-    end
-    if #bad == 0 and #list == 0 then plate(tx("NoEffects"), nil, nil, nil) end
+    T.border(self, x, y, w, h, T.color.line, a)
 end
 
--- BODY ------------------------------------------------------------------------------------
+-- STATE ------------------------------------------------------------------------------------------
 
-function P:drawBodyBack(player, m, x, y, w, h, a)
+function P:drawState(m, D)
+    local w = m.sw
+    panel(self, 0, 0, w, m.h)
     local C = T.color
-    local pad = m.pad
-    local hintH = T.fontH(T.fontTile) + 8
-    local g = {bx = x + 1, by = y + 1, bw = w - 2, bh = h - hintH - pad - 2, hintH = hintH}
-    g.hintY = g.by + g.bh + math.floor(pad / 2)
-    self.geo = g
-    T.rect(self, g.bx, g.by, g.bw, g.bh, C.cell, T.modelAlpha() * a)
-    -- the four corner marks of a scope
-    local cl = math.floor(m.c * 0.3)
-    local cc = T.mix(C.border, C.accent, 0.35)
-    for _, cn in ipairs({{g.bx + 6, g.by + 6, 1, 1}, {g.bx + g.bw - 7, g.by + 6, -1, 1},
-                         {g.bx + 6, g.by + g.bh - 7, 1, -1}, {g.bx + g.bw - 7, g.by + g.bh - 7, -1, -1}}) do
-        local cx0, cy0, sx, sy = cn[1], cn[2], cn[3], cn[4]
-        T.rect(self, sx > 0 and cx0 or cx0 - cl + 1, cy0, cl, 1, cc, a)
-        T.rect(self, cx0, sy > 0 and cy0 or cy0 - cl + 1, 1, cl, cc, a)
-    end
-    -- the doctor's level at the top left of the box
-    T.text(self, T.upper(tx("Doctor", H.doctorLevel(player))), g.bx + pad, g.by + pad, C.dim, T.fontTile, a)
-    -- the hints under it
-    local hints = {{tx("KeyLmb"), tx("HintSelect")}, {tx("KeyRmb"), tx("HintMenu")}, {tx("KeyShiftLmb"), tx("HintQuick")}}
-    local total = 0
-    for _, hk in ipairs(hints) do total = total + T.measure(T.fontTile, hk[1]) + 10 + 6 + T.measure(T.fontText, hk[2]) + pad end
-    local hx = x + math.floor((w - total + pad) / 2)
-    for _, hk in ipairs(hints) do hx = T.keyHint(self, hx, g.hintY, hk[1], hk[2], hintH) + pad end
-end
+    spaced(self, D.tState, px(16), px(14), 0, px(28), C.bright, F.ptitle, px(1.2), "left")
+    label(self, D.who, 0, px(18), w - px(16), px(22), C.dim, F.b15, "right")
 
---- The view the model's paint follows: the part under the mouse (on the model, or a
---- badge's), the chosen wound's part, the parts the kit's thing would treat.
-function P:modelView(player)
-    local hv = self.hover
-    local view = {selected = nil, selectedPart = self.selPart}
-    if hv and (hv.kind == "part" or hv.kind == "badge" or hv.kind == "row") then
-        view.hoverPart = hv.part
-        view.hover = hv.part and H.zoneOfPart[hv.part] and H.zoneOfPart[hv.part].id
+    -- the health
+    local hx, hy, hw, hh = px(16), px(56), px(340), px(176)
+    T.rect(self, hx, hy, hw, hh, C.screen)
+    T.border(self, hx, hy, hw, hh, C.border)
+    label(self, D.tHealth, hx + px(14), hy + px(12), 0, px(14), C.dim, F.h13)
+    -- (the mockup's 64 at 78 px; three digits and "/ 100" would run under the cardiogram)
+    local big = F.big
+    if T.measure(big, D.hpText) + px(6) + T.measure(F.h18, D.tOf) > px(118) then big = F.bigS end
+    local nw = label(self, D.hpText, hx + px(12), hy + px(28), 0, px(70), C.bright, big)
+    label(self, D.tOf, hx + px(12) + nw + px(6), hy + px(70), 0, px(22), C.dim, F.h18)
+    -- the cardiogram on its grid
+    local ex, ey, ew, eh = hx + px(136), hy + px(12), px(192), px(84)
+    T.rect(self, ex, ey, ew, eh, X.ecg)
+    local step = math.max(4, px(12))
+    for gx = ex + step, ex + ew - 1, step do T.rect(self, gx, ey, 1, eh, X.grid) end
+    for gy = ey + step, ey + eh - 1, step do T.rect(self, ex, gy, ew, 1, X.grid) end
+    if self.pics and knoxWoundEcg then
+        knoxWoundEcg(PIC_ECG, ew - 2, eh - 2, D.bpm, D.ecgRgb)
+        local tex = knoxWoundTex(PIC_ECG)
+        if tex then self:drawTextureScaled(tex, ex + 1, ey + 1, ew - 2, eh - 2, 1, 1, 1, 1) end
+    elseif knoxWoundBpm then
+        knoxWoundBpm(D.bpm)
     end
-    local item
-    if KnoxDrag.isActive() and KnoxDrag.entity and KnoxDrag.entity.fromKit then
-        item = KnoxDrag.entity.item
-    elseif hv and hv.kind == "kit" then
-        item = hv.group.item
+    T.border(self, ex, ey, ew, eh, C.line)
+    local pr = hx + hw - px(18)
+    local bw = label(self, D.bpmText, 0, hy + px(16), pr, px(14), C.bright, F.t12, "right")
+    label(self, D.tPulse, 0, hy + px(16), pr - bw - px(4), px(14), C.dim, F.h12, "right")
+    -- how it goes
+    local ty = hy + px(108)
+    local tx0 = hx + px(14)
+    if D.trendArrow then
+        triangle(self, tx0, ty + px(4), px(9), D.trendUp, D.trendC)
+        tx0 = tx0 + px(14)
     end
-    if item then
-        local now = getTimestampMs()
-        local gc = self.glowCache
-        if not gc or gc.item ~= item or now - gc.ms > 400 then
-            gc = {item = item, ms = now, parts = Care.partsFor(player, item)}
-            self.glowCache = gc
+    local w1 = label(self, D.trendMain, tx0, ty, 0, px(16), D.trendC, F.h14)
+    if D.trendRest then label(self, D.trendRest, tx0 + w1, ty, 0, px(16), C.dim, F.b14) end
+    -- what each wound took
+    local lx, ly, lw, lh = hx + px(14), hy + px(134), px(312), px(10)
+    T.rect(self, lx, ly, lw, lh, X.ecg)
+    local x = lx + math.floor(lw * D.hp / 100 + 0.5)
+    T.rect(self, lx, ly, x - lx, lh, C.bright)
+    local focus = self.lossPart
+    for _, sg in ipairs(D.loss) do
+        local sw = math.min(lx + lw - x, math.max(1, math.floor(lw * sg.frac + 0.5)))
+        if sw > 0 then
+            T.rect(self, x, ly, sw, lh, sg.c, (focus == nil or focus == sg.index) and 1 or 0.35)
+            T.rect(self, x, ly, 1, lh, X.ecg)
+            hit(self, "loss", x, ly - px(4), sw, lh + px(8), sg.index)
+            x = x + sw
         end
-        view.glow = gc.parts
     end
-    return view
+    local capPart = self.lossPart or self.hoverPart
+    local cr = capPart and D.byIndex[capPart]
+    if cr and cr.lossText then
+        local pw = label(self, cr.part, hx + px(14), hy + px(150), 0, px(16), cr.look.c, F.b13)
+        label(self, cr.lossText, hx + px(14) + pw, hy + px(150), 0, px(16), C.dim, F.b13)
+    else
+        label(self, D.lossAll, hx + px(14), hy + px(150), 0, px(16), C.dim, F.b13)
+    end
+
+    -- the moodles
+    label(self, D.tEffects, px(16), px(252), 0, px(16), C.dim, F.h13)
+    local hp = self.hoverPart or self.extPart
+    local tile = self.tileHover
+    for i, mo in ipairs(D.moods) do
+        local y = px(276 + (i - 1) * 70)
+        local lit = (self.moodHover == mo) or (tile ~= nil and tile.mood == mo.id)
+            or (hp ~= nil and mo.parts[hp] == true and mo.id ~= "INJURED")
+        T.rect(self, px(16), y, px(340), px(64), lit and X.litBg or C.cell)
+        T.border(self, px(16), y, px(340), px(64), lit and C.accent or C.line)
+        local sx, sy = px(21), y + px(5)
+        T.rect(self, sx, sy, px(52), px(52), C.screen)
+        frame2(self, sx, sy, px(52), px(52), mo.c)
+        if mo.icon then self:drawTextureScaledAspect(mo.icon, sx + px(6), sy + px(6), px(40), px(40), 1, 1, 1, 1) end
+        label(self, mo.name, px(86), y + px(9), 0, px(22), C.bright, F.b19)
+        label(self, mo.desc, px(86), y + px(34), 0, px(18), C.dim, F.b14)
+        for p = 1, 4 do
+            T.rect(self, px(16 + 340 - 10 - 9 - (4 - p) * 12), y + px(14), px(9), px(9), p <= mo.level and mo.c or X.pip)
+        end
+        hit(self, "mood", px(16), y, px(340), px(64), i)
+    end
+
+    -- the body's needs
+    label(self, D.tOrganism, px(16), px(640), 0, px(16), C.dim, F.h13)
+    for i, st in ipairs(D.org) do
+        local y = px(664 + (i - 1) * 30)
+        T.rect(self, px(16), y, px(340), 1, C.line)
+        label(self, st.name, px(16), y, 0, px(30), C.text, F.b15)
+        if st.frac then
+            local bx, by = px(16 + 118), y + px(14)
+            T.rect(self, bx, by, px(150), math.max(1, px(2)), X.pip)
+            T.rect(self, bx, by, math.floor(px(150) * st.frac + 0.5), math.max(1, px(2)), st.warn and C.warn or C.accent)
+        end
+        label(self, st.value, 0, y, px(356), px(30), C.bright, F.h15, "right")
+    end
 end
 
-function P:updateModel(player)
-    local g = self.geo
-    if not (g and self.model) then return end
-    local view = self:modelView(player)
-    self.view = view
-    -- the model fitted to the box's height, in the middle of it
-    local bodyAspect = Model.CAL.HEIGHT * Model.doll.width / Model.CONTENT_UNITS
-    local mh = g.bh - 2
-    local mw = math.min(g.bw - 2, math.floor(mh * bodyAspect / 0.94))
-    mh = math.min(mh, math.floor(mw / bodyAspect * 0.94))
-    local mx = g.bx + 1 + math.floor((g.bw - 2 - mw) / 2)
-    local my = g.by + 1 + math.floor((g.bh - 2 - mh) / 2)
-    local ok, err = pcall(Model.update, self.model, player, mx, my, mw, mh, view)
+-- BODY -------------------------------------------------------------------------------------------
+
+function P:drawBody(m, D, player)
+    local bx, bw = m.bx, m.bw
+    local C = T.color
+    panel(self, bx, 0, bw, m.h)
+    for y = 100, 860, 40 do T.rect(self, bx, px(y), px(7), 1, C.border) end
+    spaced(self, D.tBody, bx + px(16), px(14), 0, px(28), C.bright, F.ptitle, px(1.2), "left")
+    if not self.model then return end
+    -- the model, nearer to the part on the table (the mockup's renderBodyPose)
+    local zT, oxT, oyT = 1, 0, 0
+    local sel = self.sel
+    if sel then
+        local s, fx, fy = Model.frame(0, 0, px(350), px(800))
+        local cx, cy = Model.partPoint(sel, s, fx, fy)
+        if cx then
+            local z = 1.12
+            local tx_ = cx + (px(175) - cx) * 0.35
+            local ty_ = cy + (px(400) - cy) * 0.12
+            zT, oxT, oyT = z, tx_ - cx * z, clamp(ty_ - cy * z, -px(44), 0)
+        end
+    end
+    local z, ox, oy = self:ease("bz", zT, 500), self:ease("box", oxT, 500), self:ease("boy", oyT, 500)
+    local mx, my = math.floor(bx + px(59) + ox + 0.5), math.floor(px(64) + oy + 0.5)
+    local mw, mh = math.floor(px(350) * z + 0.5), math.floor(px(800) * z + 0.5)
+    -- what the light follows: the part under the mouse (or a row's, a loss's), the one on the
+    -- table, the parts the thing (or the moodle) under the mouse helps
+    local v = self.view
+    v.looks = D.looks
+    v.hoverPart = self.hoverPart or self.extPart
+    v.selectedPart = sel
+    v.glow = (self.tileHover and self.tileHover.fit) or (self.moodHover and self.moodHover.parts) or nil
+    local ok, err = pcall(Model.update, self.model, player, mx, my, mw, mh, v)
     if not ok and not self.modelErr then
         self.modelErr = true
         print("[Knox] health model: " .. tostring(err))
     end
-    local s, fx, fy = Model.frame(mx, my, mw, mh)
-    g.s, g.fx, g.fy = s, fx, fy
-    -- the body under the mouse (the hit map; inside the model's box only)
-    if self.hot and T.inRect(self.mx, self.my, {g.bx, g.by, g.bw, g.bh}) then
+    self.bodyCx = mx + mw / 2
+    -- the part under the mouse (the hit map knows the character from the front only)
+    self.hoverPart = nil
+    local dir = self.model.knoxDir
+    if self.mouseIn and not self.menuOpen and (dir == nil or dir == IsoDirections.S)
+            and self.mx >= bx and self.mx < bx + bw and self.my >= 0 and self.my < m.h then
+        local s, fx, fy = Model.frame(mx, my, mw, mh)
         local idx = Model.partAt((self.mx - fx) / s, (self.my - fy) / s)
         if idx and not H.missing(player, idx) then
-            local z = H.zoneOfPart[idx]
-            self:hit("part", self.mx - 1, self.my - 1, 3, 3, {part = idx, zone = z and z.id})
+            self.hoverPart = idx
+            self.cardPx, self.cardPy = Model.partPoint(idx, s, fx, fy)
         end
     end
 end
 
---- The badges over the model: a square per wound on its part (several on one part
---- side by side), its icon, its frame filling as it heals, the urgent ones pulsing.
-function P:drawBadges(player, m, a)
-    local g = self.geo
-    if not (g and g.s) then return end
+-- over the model: the line under it (what is on the table) and the hovered part's card
+function P:drawBodyOver(m, D)
+    local bx, bw = m.bx, m.bw
     local C = T.color
-    local bs = m.badge
-    local byPart, order = {}, {}
-    for _, w in ipairs(self.wounds or {}) do
-        if not byPart[w.index] then byPart[w.index] = {} table.insert(order, w.index) end
-        table.insert(byPart[w.index], w)
+    -- (the line's ground: the panel's colour coming up over the feet)
+    local gh = px(56)
+    local n = 7
+    for i = 0, n - 1 do
+        local y0 = m.h - 1 - gh + math.floor(gh * i / n)
+        local y1 = m.h - 1 - gh + math.floor(gh * (i + 1) / n)
+        local a = math.min(1, (i + 0.5) / n / 0.45)
+        T.rect(self, bx + 1, y0, bw - 2, y1 - y0, C.window, a * T.bgAlpha())
     end
-    local now = getTimestampMs()
-    local pulse = 0.5 + 0.5 * math.sin(now / 1000 * math.pi * 1.8)
-    for _, index in ipairs(order) do
-        local list = byPart[index]
-        local px, py = Model.partPoint(index, g.s, g.fx, g.fy)
-        if px then
-            local n = #list
-            local gap = 3
-            local total = n * bs + (n - 1) * gap
-            local x0 = math.floor(px - total / 2 + 0.5)
-            local y0 = math.floor(py - bs / 2 + 0.5)
-            for k, w in ipairs(list) do
-                local x = x0 + (k - 1) * (bs + gap)
-                local key = "bdg" .. w.id
-                local appear = self:ease(key, 1, 220)
-                local ba = a * appear
-                local sel = self.selWound == w.id
-                local hot = self.hover and self.hover.kind == "badge" and self.hover.id == w.id
-                T.rect(self, x, y0, bs, bs, C.window, 0.92 * ba)
-                T.border(self, x, y0, bs, bs, C.tileEdge, ba)
-                local th = math.max(2, math.floor(bs * 0.09))
-                local frac = w.progress or ((w.stage or 1) / math.max(1, #(w.path or {1})))
-                if w.kind == "destroyed" then frac = 1 end
-                local fa = ba
-                if w.urgent then fa = ba * (0.35 + 0.65 * pulse) end
-                squareProgress(self, x, y0, bs, th, math.max(0.12, frac), w.color, fa)
-                woundIcon(self, w.base, w.overlay, x, y0, bs, ba, w.poultice)
-                if sel or hot then T.tileFrame(self, x - 3, y0 - 3, bs + 6, bs + 6, sel and C.accent or C.tileHover, ba) end
-                self:hit("badge", x - 2, y0 - 2, bs + 4, bs + 4, {id = w.id, part = w.index, wound = w})
-            end
-        end
-    end
-end
-
---- Floating labels at the mouse: the part or the badge under it, a step of a path,
---- the thing dragged onto the body.
-function P:drawFloat(player, m)
-    local hv = self.hover
-    if not (self.hot and hv) or self.menuOpen then return end
-    local C = T.color
-    local lines = {}
-    if hv.kind == "part" then
-        local bp = H.part(player, hv.part)
-        local hp = math.max(0, math.floor(bp:getHealth() + 0.5))
-        table.insert(lines, {T.upper(H.partName(bp)) .. "  " .. hp, H.hpColor(hp), T.fontCaps})
-        if KnoxDrag.isActive() and KnoxDrag.entity then
-            local item = KnoxDrag.entity.item
-            local ok = Care.treats(player, bp, item)
-            table.insert(lines, {(ok and (item:getName() .. "  " .. RAQUO .. "  " .. tx("WillTreat")) or tx("WontHelp")),
-                ok and C.good or C.bad, T.fontTile})
-        else
-            for _, w in ipairs(self.wounds or {}) do
-                if w.index == hv.part then table.insert(lines, {self:woundTitle(w), w.color, T.fontTile}) end
-            end
-        end
-    elseif hv.kind == "badge" then
-        local w = hv.wound
-        table.insert(lines, {T.upper(self:woundTitle(w)), w.color, T.fontCaps})
-        table.insert(lines, {w.part .. (w.heal and ("  " .. string.char(183) .. "  " .. w.heal) or ""), C.dim, T.fontTile})
-        if w.todo then table.insert(lines, {w.todo.label, w.todo.missing and C.bad or C.accent, T.fontTile}) end
-    elseif hv.kind == "step" then
-        table.insert(lines, {hv.name, C.text, T.fontTile})
-    elseif hv.kind == "effect" then
-        local e = hv.effect
-        table.insert(lines, {e.name or "", C.bright, T.fontCaps})
-        if e.desc and e.desc ~= "" then table.insert(lines, {string.gsub(e.desc, "%s+", " "), C.dim, T.fontTile}) end
+    local ly, lh = m.h - px(16) - px(18), px(18)
+    local rec = self.sel and self.selRec
+    if rec then
+        local w1 = T.measure(F.b15, D.tOnTable)
+        local w2 = T.measure(F.b15, rec.partLower)
+        local x0 = bx + math.floor((bw - w1 - w2) / 2)
+        label(self, D.tOnTable, x0, ly, 0, lh, C.dim, F.b15)
+        label(self, rec.partLower, x0 + w1, ly, 0, lh, rec.look.c, F.b15)
     else
+        label(self, D.tHoverPart, bx, ly, bw, lh, C.dim, F.b15, "centre")
+    end
+end
+
+function P:drawCard(m, D)
+    local idx = self.hoverPart
+    local want = idx ~= nil and idx ~= self.sel and not self.rmbMoved
+    if want then
+        self.cardIdx, self.cardX, self.cardY = idx, self.cardPx, self.cardPy
+    end
+    local a = self:ease("card", want and 1 or 0, 140)
+    idx = self.cardIdx
+    if a <= 0.02 or idx == nil or not self.cardX then return end
+    local C = T.color
+    local rec = D.byIndex[idx]
+    local cw = px(372)
+    local hgt = rec and (px(54) + px(10) + px(124) + px(6) + px(46) + px(2) + px(40) + 2) or (px(54) + 2)
+    local right = self.cardX >= (self.bodyCx or 0) - px(4)
+    local x = right and (m.bx + px(432)) or px(42)
+    local y = clamp(math.floor(self.cardY - px(70)), px(12), m.h - hgt - px(8))
+    local col = rec and rec.look.c or C.accent
+    -- the leader line from the part to the card
+    local ex, ey = right and x or (x + cw), y + px(27)
+    local pxp, pyp = math.floor(self.cardX + 0.5), math.floor(self.cardY + 0.5)
+    local lw = math.max(1, math.floor(1.5 * K + 0.5))
+    local mid = math.floor(pxp + (ex - pxp) * 0.55 + 0.5)
+    T.rect(self, math.min(pxp, mid), pyp, math.abs(mid - pxp) + lw, lw, col, a)
+    T.rect(self, mid, math.min(pyp, ey), lw, math.abs(ey - pyp) + lw, col, a)
+    T.rect(self, math.min(mid, ex), ey, math.abs(ex - mid) + lw, lw, col, a)
+    T.rect(self, pxp - px(4), pyp - px(4), px(8), px(8), C.screen, a)
+    frame2(self, pxp - px(4), pyp - px(4), px(8), px(8), col, a)
+    T.rect(self, ex - px(3), ey - px(3), px(6), px(6), col, a)
+    -- the card
+    T.rect(self, x + px(4), y + px(10), cw, hgt, X.black, 0.35 * a)
+    T.rect(self, x, y, cw, hgt, C.window, a)
+    T.rect(self, x + 1, y + 1, cw - 2, px(54), C.header, a)
+    T.rect(self, x + 1, y + 1 + px(54), cw - 2, 1, C.border, a)
+    spaced(self, self.partNames[idx] or "", x + px(14), y + px(8), 0, px(22), rec and col or C.bright, F.t20, px(1), "left", a)
+    label(self, rec and rec.cardSub or D.tCardNone, x + px(14), y + px(31), 0, px(16), C.dim, F.b14, nil, a)
+    label(self, D.tPartHp, x, y + px(13), cw - px(14), px(14), C.dim, F.h13, "right", a)
+    label(self, rec and rec.hpText or "100", x, y + px(29), cw - px(14), px(18), C.bright, F.t18, "right", a)
+    if rec then
+        local py0 = y + 1 + px(54) + px(10)
+        self:drawPicture(PIC_CARD, VIEW_MINI, rec, x + px(10), py0, cw - px(20), px(124), a)
+        -- its wound's row
+        local ry = py0 + px(124) + px(6)
+        local qx, qy = x + px(12), ry + px(9)
+        T.rect(self, qx, qy, px(28), px(28), C.screen, a)
+        frame2(self, qx, qy, px(28), px(28), col, a)
+        local done = 0
+        for _, s in ipairs(rec.steps) do if s.done then done = done + 1 end end
+        local f = rec.look.heal and math.max(0.12, rec.progress or 0) or (#rec.steps > 0 and done / #rec.steps * 0.5 or 0)
+        local fh = math.floor(px(18) * f + 0.5)
+        if fh > 0 then T.rect(self, qx + px(5), qy + px(28) - px(5) - fh, px(18), fh, col, a) end
+        label(self, rec.title, x + px(52), ry + px(5), 0, px(20), C.bright, F.b17, nil, a)
+        label(self, rec.look.words, x + px(52), ry + px(25), 0, px(16), col, F.b14, nil, a)
+        -- its keys
+        local fy = ry + px(46) + px(2)
+        T.rect(self, x + 1, fy, cw - 2, 1, C.border, a)
+        local kx = T.keyHint(self, x + px(12), fy + px(9), D.tKeyLmb, D.tToTable, px(22), a)
+        T.keyHint(self, kx + px(14), fy + px(9), D.tKeyShift, D.tQuickShort, px(22), a)
+    end
+    T.border(self, x, y, cw, hgt, C.accent, a)
+end
+
+-- TABLE ------------------------------------------------------------------------------------------
+
+function P:drawRow(D, r, i, x, y, w, h, clipY0, clipY1)
+    local C = T.color
+    -- (lit as the mockup's .imp.lit: the row under the mouse or its part under the mouse on the body)
+    local lit = (self.hoverPart or self.extPart) == r.index
+    T.rect(self, x, y, w, h, lit and X.rowLit or C.cell)
+    T.border(self, x, y, w, h, lit and C.accent or C.line)
+    self:drawPicture(PIC_ROW + i, VIEW_THUMB, r, x + px(8), y + px(8), px(236), px(86))
+    local lx = x + px(262)
+    spaced(self, r.partUpper, lx, y + px(12), 0, px(24), C.bright, F.t21, px(0.8), "left")
+    label(self, r.row.pw, lx, y + px(40), 0, px(20), r.look.c, F.b16)
+    local ny, nh = y + px(68), px(22)
+    if r.cur then
+        local wx = lx + label(self, D.tNext, lx, ny, 0, nh, C.dim, F.b15) + px(6)
+        wx = wx + label(self, r.row.next, wx, ny, 0, nh, C.text, F.b15) + px(6)
+        if r.row.item then
+            T.itemIcon(self, r.row.item, wx, ny, px(22), 1)
+            label(self, r.row.have, wx + px(28), ny, 0, nh, C.dim, F.b15)
+        elseif r.row.none then
+            label(self, D.tStepNone, wx, ny, 0, nh, C.bad, F.b15)
+        end
+    else
+        label(self, D.tNothingToDo, lx, ny, 0, nh, C.dim, F.b15)
+    end
+    -- the tag
+    local tag = r.look.tagText
+    local ls = px(0.9)
+    local tw = T.measure(F.t13, tag) + ls * (string.len(tag) - 1) + px(18)
+    local tgx = x + w - px(14) - tw
+    T.rect(self, tgx, y + px(14), tw, px(24), r.look.c)
+    spaced(self, tag, tgx, y + px(14), tw, px(24), C.ink, F.t13, ls)
+    if r.look.heal then
+        local hx, hy = x + w - px(14) - px(150), y + h - px(34) - px(4)
+        T.rect(self, hx, hy, px(150), px(4), X.pip)
+        T.rect(self, hx, hy, math.floor(px(150) * math.max(0.03, r.progress or 0) + 0.5), px(4), X.mint)
+    end
+    label(self, D.tToTableGo, x, y + h - px(12) - px(17), w - px(14), px(17), C.dim, F.h14, "right")
+    local hy0, hy1 = math.max(y, clipY0), math.min(y + h, clipY1)
+    if hy1 > hy0 then hit(self, "imp", x, hy0, w, hy1 - hy0, r.index) end
+end
+
+function P:drawList(m, D)
+    local x0, w, h = m.rx, m.rw, m.th
+    local C = T.color
+    spaced(self, D.tList, x0 + px(16), px(14), 0, px(28), C.bright, F.ptitle, px(1.2), "left")
+    label(self, D.tListNote, x0, px(18), w - px(16), px(22), C.dim, F.b15, "right")
+    if #D.recs == 0 then
+        label(self, D.tNoWounds, x0, math.floor(h * 0.42), w, px(30), C.bright, F.t22, "centre")
+        label(self, D.tNoWoundsSub, x0, math.floor(h * 0.42) + px(36), w, px(20), C.dim, F.b15, "centre")
+        self.listMax = 0
         return
     end
-    local pad = 6
-    local w, h = 0, pad
-    for _, l in ipairs(lines) do
-        w = math.max(w, T.measure(l[3], l[1]))
-        h = h + T.fontH(l[3]) + 2
-    end
-    w = w + pad * 2
-    h = h + pad - 2
-    local x, y = self.mx + 18, self.my + 14
-    if x + w > self:getWidth() then x = self.mx - 12 - w end
-    if y + h > self:getHeight() then y = self.my - 8 - h end
-    T.rect(self, x, y, w, h, C.window, 0.95)
-    T.tileFrame(self, x, y, w, h, C.tileFrame)
-    local ly = y + pad
-    for _, l in ipairs(lines) do
-        T.text(self, l[1], x + pad, ly, l[2], l[3])
-        ly = ly + T.fontH(l[3]) + 2
-    end
-end
-
---- A wound's name now: its step's name on its path ("Bandaged"), or its own.
-function P:woundTitle(w)
-    local step = w.path and w.path[w.stage or 1]
-    local key = step and step[3]
-    local stepName = key and tx(key)
-    if w.dirty and not w.cover then stepName = tx("St_Dirty") end
-    if not stepName or w.kind == "destroyed" then return w.name end
-    if (w.stage or 1) == 1 and not w.cover then return w.name end
-    return w.name .. " " .. string.char(183) .. " " .. stepName
-end
-
--- RIGHT -----------------------------------------------------------------------------------
-
-function P:drawSide(player, m, x, y, w, h, a)
-    local w0 = self.selWound and self:wound(self.selWound)
-    if w0 then self:drawCard(player, m, w0, x, y, w, h, a)
-    else self:drawOverview(player, m, x, y, w, h, a) end
-end
-
---- A row's square icon tile.
-local function tile(ui, w, x, y, s, a, frame)
-    local C = T.color
-    T.rect(ui, x, y, s, s, C.cell, a)
-    T.border(ui, x, y, s, s, frame or T.mix(C.tileEdge, w.color, 0.75), a)
-    woundIcon(ui, w.base, w.overlay, x, y, s, a, w.poultice)
-end
-
-function P:drawOverview(player, m, x, y, w, h, a)
-    local C = T.color
-    local pad = m.pad
-    local ix, iw = x + pad, w - pad * 2
-    local todo, healing = {}, {}
-    for _, wd in ipairs(self.wounds or {}) do
-        if wd.todo then table.insert(todo, wd) else table.insert(healing, wd) end
-    end
-    local areaY, areaH = y + pad, h - pad * 2
-    local clip = {x + 1, areaY, w - 2, areaH}
-    self.sideRect = clip
-    local cy = areaY - math.floor(self.scroll + 0.5)
-    self:setStencilRect(clip[1], clip[2], clip[3], clip[4])
-    local rh = math.floor(m.c * 0.9 + 0.5)
-    local ts = rh - 8
-    local bf = T.fontTile
-    local btnH = T.fontH(bf) + 10
-    if #todo == 0 and #healing == 0 then
-        local my = areaY + math.floor(areaH * 0.38)
-        local tex = Wd.icon("healed")
-        local is = math.floor(m.c * 1.1)
-        if tex then self:drawTextureScaled(tex, ix + math.floor((iw - is) / 2), my - is - pad, is, is, 0.9 * a, 1, 1, 1) end
-        T.textCentre(self, T.upper(tx("AllGood")), ix + math.floor(iw / 2), my, C.text, T.fontCaps, a)
-        T.textCentre(self, tx("AllGoodSub"), ix + math.floor(iw / 2), my + T.fontH(T.fontCaps) + 4, C.dim, T.fontText, a)
-    end
-    if #todo > 0 then
-        cy = cy + section(self, tx("Important"), ix, cy, iw, a)
-        for _, wd in ipairs(todo) do
-            local hot = self.hover and (self.hover.kind == "row" or self.hover.kind == "rowbtn") and self.hover.id == wd.id
-            if hot then self:drawRect(ix - 3, cy, iw + 6, rh, 0.06 * a, 1, 1, 1) end
-            tile(self, wd, ix, cy + 4, ts, a)
-            -- the button at the right: urgent in red, else sand
-            local btnT = wd.todo.missing and tx("BtnMenu") or (wd.urgent and tx("BtnUrgent") or tx("BtnTreat"))
-            local bw = T.measure(bf, T.upper(btnT)) + T.pad * 2
-            local bx = ix + iw - bw
-            local by = cy + math.floor((rh - btnH) / 2)
-            local hotB = self.hover and self.hover.kind == "rowbtn" and self.hover.id == wd.id
-            T.button(self, {bx, by, bw, btnH}, btnT, {hover = hotB, primary = not wd.todo.missing, font = bf})
-            local tx0 = ix + ts + 8
-            local tw = bx - 8 - tx0
-            T.marquee(self, self:state("ot" .. wd.id), wd.todo.label, tx0, cy + 4, tw, wd.todo.missing and C.bad or C.bright, T.fontText, a)
-            T.marquee(self, self:state("os" .. wd.id), wd.part .. "  " .. string.char(183) .. "  " .. self:woundTitle(wd),
-                tx0, cy + 4 + T.fontH(T.fontText) + 1, tw, C.dim, T.fontTile, a)
-            self:hit("row", ix - 3, cy, iw + 6, rh, {id = wd.id, part = wd.index, wound = wd, clip = clip})
-            self:hit("rowbtn", bx, by, bw, btnH, {id = wd.id, part = wd.index, wound = wd, clip = clip})
-            T.rect(self, ix, cy + rh, iw, 1, C.border, a)
-            cy = cy + rh + 2
-        end
-        cy = cy + pad
-    end
-    if #healing > 0 then
-        cy = cy + section(self, tx("HealingNow"), ix, cy, iw, a)
-        for _, wd in ipairs(healing) do
-            local hot = self.hover and self.hover.kind == "row" and self.hover.id == wd.id
-            if hot then self:drawRect(ix - 3, cy, iw + 6, rh, 0.06 * a, 1, 1, 1) end
-            tile(self, wd, ix, cy + 4, ts, a)
-            local tx0 = ix + ts + 8
-            local right = wd.notHealing and wd.heal or wd.heal
-            local rw = right and T.measure(bf, T.upper(right)) or 0
-            if right then T.textRight(self, T.upper(right), ix + iw, cy + 4, wd.notHealing and C.bad or C.dim, bf, a) end
-            local tw = iw - ts - 8 - (rw > 0 and rw + 8 or 0)
-            T.marquee(self, self:state("ht" .. wd.id), self:woundTitle(wd), tx0, cy + 4, tw, C.text, T.fontText, a)
-            T.text(self, wd.part, tx0, cy + 4 + T.fontH(T.fontText) + 1, C.dim, T.fontTile, a)
-            -- how far along: a thin bar under it
-            if wd.progress then
-                local barY = cy + rh - 4
-                T.rect(self, tx0, barY, ix + iw - tx0, 2, C.line, a)
-                T.rect(self, tx0, barY, math.floor((ix + iw - tx0) * clamp(self:ease("hp" .. wd.id, wd.progress, 300), 0, 1) + 0.5), 2, H.HEALED, a)
-            end
-            self:hit("row", ix - 3, cy, iw + 6, rh, {id = wd.id, part = wd.index, wound = wd, clip = clip})
-            cy = cy + rh + 2
+    local top = px(58)
+    local listH = h - top - px(8)
+    local pitch, rowH = px(112), px(104)
+    self.listMax = math.max(0, #D.recs * pitch - px(8) - listH)
+    self.listScroll = clamp(self.listScroll or 0, 0, self.listMax)
+    local scroll = math.floor(self:ease("ls", self.listScroll, 120) + 0.5)
+    self.listRect1, self.listRect2, self.listRect3, self.listRect4 = x0, top, w, listH
+    self:setStencilRect(x0 + 1, top, w - 2, listH)
+    for i, r in ipairs(D.recs) do
+        local y = top + (i - 1) * pitch - scroll
+        if y + rowH > top and y < top + listH then
+            self:drawRow(D, r, i, x0 + px(16), y, w - px(32), rowH, top, top + listH)
         end
     end
     self:clearStencilRect()
-    local contentH = cy + math.floor(self.scroll + 0.5) - areaY
-    self.maxScroll = math.max(0, contentH - areaH)
-    self.scrollTo = clamp(self.scrollTo, 0, self.maxScroll)
-    self.scroll = self:ease("scroll", self.scrollTo, 70)
 end
 
---- The chosen wound: its icon and name, its way of treatment as squares, what it
---- needs, the treatment going on, one button for what to do now.
-function P:drawCard(player, m, wd, x, y, w, h, a)
+-- a step's slot and its words (the mockup's stepHtml)
+function P:drawStep(v, sx, sy, playing, delta, now)
     local C = T.color
-    local pad = m.pad
-    local ix, iw = x + pad, w - pad * 2
-    local cy = y + pad
-    -- the head
-    local hs = math.floor(m.c * 1.25 + 0.5)
-    tile(self, wd, ix, cy, hs, a, wd.color)
-    local th = math.max(2, math.floor(hs * 0.06))
-    squareProgress(self, ix, cy, hs, th, math.max(0.12, wd.progress or ((wd.stage or 1) / math.max(1, #wd.path))), wd.color, a)
-    local tx0 = ix + hs + pad
-    local tw = ix + iw - tx0
-    T.marquee(self, self:state("cn" .. wd.id), T.upper(self:woundTitle(wd)), tx0, cy + 2, tw, C.bright, T.fontCaps, a)
-    T.marquee(self, self:state("cp" .. wd.id), wd.part, tx0, cy + 2 + T.fontH(T.fontCaps) + 2, tw, C.text, T.fontText, a)
-    if wd.heal then
-        T.text(self, wd.heal, tx0, cy + 2 + T.fontH(T.fontCaps) + 2 + T.fontH(T.fontText) + 2,
-            wd.notHealing and C.bad or C.dim, T.fontTile, a)
+    local ss = px(72)
+    local x, y = sx + px(22), sy
+    local st = v.state
+    if playing then
+        local p = 0.5 - 0.5 * math.cos(now / 1000 * 2 * math.pi)
+        T.rect(self, x - px(5), y - px(5), ss + px(10), ss + px(10), C.accent, 0.22 * p)
+    elseif st == "cur" then
+        T.rect(self, x - px(4), y - px(4), ss + px(8), ss + px(8), C.accent, 0.10)
     end
-    cy = cy + hs + pad
-
-    -- the way of treatment: a square per step, where it is now in sand
-    if #wd.path > 1 then
-        cy = cy + section(self, tx("Path"), ix, cy, iw, a)
-        local n = #wd.path
-        local ss = math.floor(m.c * 0.8 + 0.5)
-        local link = math.max(8, math.floor((iw - n * ss) / math.max(1, n - 1)))
-        link = math.min(link, math.floor(ss * 0.9))
-        local sx = ix
-        for i, step in ipairs(wd.path) do
-            local past, now = i < (wd.stage or 1), i == (wd.stage or 1)
-            local sa = past and 0.45 * a or (now and a or 0.75 * a)
-            local over = step[2]
-            if now and wd.dirty and over == "o_band" then over = "o_dirty" end
-            T.rect(self, sx, cy, ss, ss, C.cell, sa)
-            if now then T.tileFrame(self, sx - 2, cy - 2, ss + 4, ss + 4, C.accent, a)
-            else T.border(self, sx, cy, ss, ss, C.tileEdge, sa) end
-            woundIcon(self, step[1], over, sx, cy, ss, sa, false)
-            self:hit("step", sx, cy, ss, ss, {name = step[3] and tx(step[3]) or wd.name})
-            if i < n then
-                T.rect(self, sx + ss + 2, cy + math.floor(ss / 2) - 1, link - 4, 2, past and C.good or C.tileEdge, a)
-            end
-            sx = sx + ss + link
+    T.rect(self, x, y, ss, ss, st == "done" and X.med or C.cell)
+    -- its thing's picture: in colour when done, half when it is next, grey before
+    local ix, iy, is = x + px(12), y + px(12), px(48)
+    if v.item and st ~= "done" then
+        if st == "cur" or st == "none" or st == "free" or playing then
+            T.itemIcon(self, v.item, ix, iy, is, 0.6)
+        else
+            local tex = v.item:getTex()
+            local grey = tex and T.greyIcon(tex)
+            if grey then self:drawTextureScaledAspect(grey, ix, iy, is, is, 0.28, 1, 1, 1)
+            else T.itemIcon(self, v.item, ix, iy, is, 0.28) end
         end
-        cy = cy + ss + pad
-    end
-
-    -- what it needs
-    local needs = Wd.needs(player, wd)
-    if #needs > 0 then
-        cy = cy + section(self, tx("Needs"), ix, cy, iw, a)
-        for _, nd in ipairs(needs) do
-            T.text(self, nd.name, ix, cy, C.text, T.fontText, a)
-            local have = nd.have > 0
-            T.textRight(self, have and tx("Have", nd.have) or tx("HaveNone"), ix + iw, cy, have and C.good or C.bad, T.fontText, a)
-            cy = cy + T.fontH(T.fontText) + 4
+    elseif v.tex then
+        if st == "done" then
+            self:drawTextureScaledAspect(v.tex, ix, iy, is, is, 1, 1, 1, 1)
+        elseif st == "cur" or st == "none" or st == "free" or playing then
+            self:drawTextureScaledAspect(v.tex, ix, iy, is, is, 0.6, 1, 1, 1)
+        else
+            local grey = T.greyIcon(v.tex)
+            self:drawTextureScaledAspect(grey or v.tex, ix, iy, is, is, 0.28, 1, 1, 1)
         end
-        cy = cy + math.floor(pad / 2)
     end
-
-    -- the treatment going on: its name and a sand bar
-    local progress, job = Care.partProgress(player, wd.bp)
-    if progress then
-        local tht = T.fontH(T.fontTile) + 10
-        local p = clamp(progress, 0, 1)
-        T.rect(self, ix, cy, iw, tht, C.accent, 0.12 * a)
-        T.rect(self, ix, cy, math.floor(iw * p + 0.5), tht, C.accent, 0.28 * a)
-        T.inkLeft(self, T.upper(job or tx("Treating")), ix + 6, cy, tht, C.accent, T.fontTile, a)
-        T.textRight(self, math.floor(p * 100 + 0.5) .. "%", ix + iw - 6, cy + math.floor((tht - T.fontH(T.fontTile)) / 2), C.accent, T.fontTile, a)
-        cy = cy + tht + pad
+    -- the action's progress, from below
+    if delta and delta > 0 then
+        local fh = math.floor((ss - px(4)) * math.min(1, delta) + 0.5)
+        T.rect(self, x + px(2), y + ss - px(2) - fh, ss - px(4), fh, C.accent, 0.35)
     end
-
-    -- the buttons at the bottom: what to do now (or why it can't be), the menu, back
-    local bf = T.fontTile
-    local btnH = T.fontH(bf) + 12
-    local by = y + h - pad - btnH
-    local backT, menuT = tx("BtnBack"), tx("BtnMenu")
-    local backW = T.measure(bf, T.upper(backT)) + T.pad * 2
-    local menuW = T.measure(bf, T.upper(menuT)) + T.pad * 2
-    local bx = ix + iw - backW
-    local hv = self.hover
-    T.button(self, {bx, by, backW, btnH}, backT, {hover = hv and hv.kind == "cardbtn" and hv.btn == "back", font = bf})
-    self:hit("cardbtn", bx, by, backW, btnH, {btn = "back"})
-    bx = bx - 6 - menuW
-    T.button(self, {bx, by, menuW, btnH}, menuT, {hover = hv and hv.kind == "cardbtn" and hv.btn == "menu", font = bf})
-    self:hit("cardbtn", bx, by, menuW, btnH, {btn = "menu", wound = wd})
-    local room = bx - 6 - ix
-    if wd.todo and not wd.todo.missing then
-        local label = wd.todo.label
-        if wd.todo.steps and #wd.todo.steps > 1 then label = label .. " +" .. (#wd.todo.steps - 1) end
-        local s = T.fit(T.upper(label), bf, room - T.pad * 2)
-        local doW = math.min(room, T.measure(bf, s) + T.pad * 2)
-        T.button(self, {ix, by, doW, btnH}, s, {hover = hv and hv.kind == "cardbtn" and hv.btn == "do", primary = true, font = bf})
-        self:hit("cardbtn", ix, by, doW, btnH, {btn = "do", wound = wd})
-        -- the steps of the quick treatment above the button
-        if wd.todo.steps and #wd.todo.steps > 1 then
-            T.marquee(self, self:state("cs" .. wd.id), table.concat(wd.todo.steps, " " .. RAQUO .. " "), ix,
-                by - T.fontH(bf) - 4, iw, C.dim, bf, a)
+    if playing then frame2(self, x, y, ss, ss, X.now)
+    elseif st == "done" then frame2(self, x, y, ss, ss, C.tileFrame)
+    elseif st == "cur" then frame2(self, x, y, ss, ss, C.accent)
+    elseif st == "none" then frame2(self, x, y, ss, ss, C.bad)
+    elseif st == "free" then frame2(self, x, y, ss, ss, C.tileFrame)
+    else dashed(self, x, y, ss, ss, C.tileEdge) end
+    if st == "done" then
+        local cs = px(18)
+        -- (the author 2026-11-11: under the mouse a step that can be taken back shows a red cross)
+        if v.undo and self.hvKind == "step" and self.hvA == v.i and not playing then
+            T.rect(self, x + ss - cs + px(5), y - px(5), cs, cs, C.bad)
+            cross(self, x + ss - cs + px(5), y - px(5), cs, C.ink)
+        else
+            T.rect(self, x + ss - cs + px(5), y - px(5), cs, cs, X.mint)
+            tick(self, x + ss - cs + px(5), y - px(5), cs, C.ink)
         end
-    elseif wd.todo and wd.todo.missing then
-        T.marquee(self, self:state("cm" .. wd.id), wd.todo.label, ix, by + math.floor((btnH - T.fontH(T.fontText)) / 2), room, C.bad, T.fontText, a)
+    end
+    local bright = st == "done" or st == "cur" or st == "none" or st == "free" or playing
+    label(self, v.name, sx, y + ss + px(9), px(116), px(16), bright and C.bright or C.dim, F.h14, "centre")
+    local sub = v.sub
+    if playing then sub = self.subPlaying end
+    label(self, sub, sx - px(10), y + ss + px(27), px(136), px(17), v.bad and C.bad or C.dim, F.b14, "centre")
+end
+
+function P:drawSelected(m, D, rec, player, now)
+    local x0, w = m.rx, m.rw
+    local C = T.color
+    local S = D.sel
+    if not S then return end
+    local session = G.session(player)
+    -- back to the list
+    local bx, by, bh = x0 + px(16), px(14), px(30)
+    local bw = T.measure(F.h14, D.tBack) + px(20)
+    local hot = self.hvKind == "back"
+    T.rect(self, bx, by, bw, bh, C.buttonBg)
+    T.border(self, bx, by, bw, bh, hot and C.accent or C.tileEdge)
+    label(self, D.tBack, bx + px(8), by, 0, bh, hot and C.bright or C.text, F.h14)
+    hit(self, "back", bx, by, bw, bh)
+    -- the part's name and its health
+    spaced(self, rec.partUpper, x0 + px(150), px(10), 0, px(30), rec.look.c, F.t26, px(1.3), "left")
+    label(self, S.tsub, x0 + px(150), px(40), 0, px(18), C.dim, F.b15)
+    label(self, D.tPartHp, x0, px(14), w - px(18), px(14), C.dim, F.h13, "right")
+    local ow = label(self, D.tOfShort, x0, px(31), w - px(18), px(26), C.dim, F.h15, "right")
+    label(self, rec.hpText, x0, px(29), w - px(18) - ow, px(26), C.bright, F.t24, "right")
+    -- the wound seen from above (the mini-game over it while a step is played)
+    local px0, py0, pw, ph = x0 + px(16), px(70), w - px(32), px(348)
+    self.picX, self.picY, self.picW, self.picH = px0 + 1, py0 + 1, pw - 2, ph - 2
+    self:drawPicture(PIC_TABLE, VIEW_TABLE, rec, px0, py0, pw, ph)
+    hit(self, "pic", px0, py0, pw, ph)
+    local playingId = session and session.index == rec.index and session.step or nil
+    if session and session.games and playingId then self:drawGameHud(S, px0, py0, pw, ph, session) end
+
+    -- the wound: what it is, how it is
+    local wy = px(430)
+    local ix = x0 + px(16)
+    spaced(self, S.wn, ix, wy, 0, px(26), rec.look.c, F.t22, px(0.9), "left")
+    local ly = wy + px(30)
+    for _, l in ipairs(S.ws) do
+        label(self, l, ix, ly, 0, px(20), C.text, F.b16)
+        ly = ly + px(20)
+    end
+    ly = ly + px(10)
+    for _, l in ipairs(S.wt) do
+        label(self, l, ix, ly, 0, px(19), C.dim, F.b15)
+        ly = ly + px(19)
+    end
+    if rec.look.heal then
+        T.rect(self, ix, ly + px(10), px(250), px(4), X.pip)
+        T.rect(self, ix, ly + px(10), math.floor(px(250) * math.max(0.03, rec.progress or 0) + 0.5), px(4), X.mint)
+    end
+
+    -- the steps, in order (as many as fit; the next one always among them)
+    local steps = S.steps
+    local n = #steps
+    local sx0, sy = ix + px(300), wy + px(2)
+    local room = (x0 + w - px(16) - px(230) - px(16)) - sx0
+    local fit = math.max(1, math.floor((room + px(22)) / px(138)))
+    local first = 1
+    if n > fit then
+        local curI = n
+        for i, v in ipairs(steps) do
+            if v.state == "cur" or v.state == "none" then curI = i break end
+        end
+        first = clamp(curI - 1, 1, n - fit + 1)
+    end
+    local last = math.min(n, first + fit - 1)
+    local delta
+    if playingId and session.action and session.action.action then
+        local ok, d = pcall(session.action.getJobDelta, session.action)
+        delta = ok and d or nil
+    end
+    if first > 1 then label(self, LSAQUO, sx0 - px(16), sy, px(14), px(72), C.dim, F.h18, "centre") end
+    for i = first, last do
+        local v = steps[i]
+        local sx = sx0 + (i - first) * px(138)
+        if i > first then chevron(self, sx - px(22) + px(13), sy + px(36), px(4), C.tileEdge) end
+        local playing = playingId == v.id or (v.xid ~= nil and playingId == v.xid)
+        self:drawStep(v, sx, sy, playing, playing and delta or nil, now)
+        hit(self, "step", sx, sy, px(116), px(120), i)
+    end
+    if last < n then
+        label(self, RSAQUO, sx0 + (last - first + 1) * px(138) - px(22), sy, px(14), px(72), C.dim, F.h18, "centre")
+    end
+
+    -- the buttons
+    local qx, qy, qw, qh = x0 + w - px(16) - px(230), wy + px(2), px(230), px(44)
+    if S.left > 0 then
+        local hotQ = self.hvKind == "quick" and not session
+        T.rect(self, qx, qy, qw, qh, hotQ and X.mainHot or C.accent, session and 0.5 or 1)
+        label(self, D.tQuick, qx, qy, qw, qh, C.ink, F.t16, "centre")
+        hit(self, "quick", qx, qy, qw, qh)
     else
-        T.marquee(self, self:state("cw" .. wd.id), tx("JustHeals"), ix, by + math.floor((btnH - T.fontH(T.fontText)) / 2), room, C.good, T.fontText, a)
+        T.rect(self, qx, qy, qw, qh, C.buttonBg)
+        T.border(self, qx, qy, qw, qh, C.line)
+        label(self, D.tNothing, qx, qy, qw, qh, C.dim, F.h16, "centre")
+    end
+    local hotM = self.hvKind == "menu"
+    T.rect(self, qx, qy + px(52), qw, qh, C.buttonBg)
+    T.border(self, qx, qy + px(52), qw, qh, hotM and C.accent or C.tileEdge)
+    label(self, D.tAll, qx, qy + px(52), qw, qh, hotM and C.bright or C.text, F.h16, "centre")
+    hit(self, "menu", qx, qy + px(52), qw, qh)
+    for i, l in ipairs(S.note) do
+        label(self, l, x0, qy + px(106) + (i - 1) * px(17), w - px(16), px(17), C.dim, F.b14, "right")
     end
 end
 
--- what the quick treatment of a part would do (asked many times a frame: kept a moment)
-function P:quickSteps(player, bp)
-    self.quickCache = self.quickCache or {}
-    local now = getTimestampMs()
-    local c = self.quickCache[bp]
-    if c and now - c.ms < 500 then return c.steps end
-    local ok, steps = pcall(Care.quickTreat, player, bp, true)
-    steps = ok and steps or {}
-    self.quickCache[bp] = {ms = now, steps = steps}
-    return steps
-end
-
--- KIT ----------------------------------------------------------------------------------------
-
-function P:drawKit(player, m, x, y, w, h, a)
+-- the mini-game's lines over the picture: how to play, the hand, how far, how long
+function P:drawGameHud(S, x, y, w, h, s)
     local C = T.color
-    local pad = m.pad
-    local ix, iw = x, w
-    local kit = Care.kit(player)
-    local secH = section(self, getText("IGUI_KnoxHP_Kit"), ix, y, iw, a)
-    -- the hint at the right of its title
-    local wd = self.selWound and self:wound(self.selWound)
-    local selBp = wd and wd.bp
-    local hint = selBp and tx("KitApply", H.partName(selBp)) or tx("KitHint")
-    local hf = T.fontTile
-    local titleW = T.measure(T.fontCaps, T.upper(getText("IGUI_KnoxHP_Kit")))
-    local hintS = T.upper(hint)
-    local hw = math.min(T.measure(hf, hintS), iw - titleW - pad * 3)
-    if hw > 0 then
-        T.rect(self, ix + iw - hw - pad, y, hw + pad, T.fontH(T.fontCaps), C.screen or C.window, a)
-        T.marquee(self, self:state("kitHint"), hintS, ix + iw - hw, y + math.floor((T.fontH(T.fontCaps) - T.fontH(hf)) / 2), hw,
-            selBp and C.accent or C.dim, hf, a)
+    local id = PIC_TABLE
+    local stage = knoxWoundGameGet(id, "stage")
+    if self.howStage ~= stage or self.howFor ~= s then
+        self.howStage, self.howFor = stage, s
+        local key = knoxWoundGameHow(id)
+        self.howText = key and T.upper(getText("IGUI_KnoxHP_" .. key)) or ""
     end
-    local ts = m.tile
-    local ty = y + secH
-    if #kit == 0 then
-        T.text(self, tx("KitEmpty"), ix, ty + math.floor((ts - T.fontH(T.fontText)) / 2), C.dim, T.fontText, a)
+    label(self, self.howText, x + px(14), y + px(9), 0, px(18), C.bright, F.h15)
+    local aw = label(self, S.aid, x, y + px(9), w - px(14), px(18), C.dim, F.b14, "right")
+    label(self, S.shake, x, y + px(9), w - px(14) - aw, px(18), S.shakeOn and C.warn or X.mint, F.b14, "right")
+    -- the bottom band
+    local bh = px(30)
+    local by = y + h - bh
+    T.rect(self, x + 1, by, w - 2, bh - 1, C.screen, 0.9)
+    T.rect(self, x + 1, by, w - 2, 1, C.line)
+    local cx = x + px(14)
+    cx = cx + label(self, S and self.D.tGameReady or "", cx, by, 0, bh, C.dim, F.h13) + px(10)
+    local prog = math.max(0, knoxWoundGameGet(id, "prog"))
+    T.rect(self, cx, by + math.floor(bh / 2) - px(2), px(200), px(4), X.pip)
+    T.rect(self, cx, by + math.floor(bh / 2) - px(2), math.floor(px(200) * math.min(1, prog) + 0.5), px(4), C.accent)
+    cx = cx + px(200) + px(32)
+    cx = cx + label(self, self.D.tGameTime, cx, by, 0, bh, C.dim, F.h13) + px(10)
+    local t = math.max(0, knoxWoundGameGet(id, "t"))
+    local van = math.max(0.5, knoxWoundGameGet(id, "van"))
+    T.rect(self, cx, by + math.floor(bh / 2) - px(2), px(200), px(4), X.pip)
+    T.rect(self, cx, by + math.floor(bh / 2) - px(2), math.floor(px(200) * math.min(1, t / van) + 0.5), px(4), X.timeBar)
+    cx = cx + px(200) + px(10)
+    -- (the seconds' words made anew a tenth of a second at a time, not each frame)
+    local slips = knoxWoundGameGet(id, "slips")
+    local tenth = math.floor(t * 10)
+    if self.hudTenth ~= tenth or self.hudSlips ~= slips or self.hudVan ~= van then
+        self.hudTenth, self.hudSlips, self.hudVan = tenth, slips, van
+        local secs = decimal(string.format("%.1f", tenth / 10))
+        local vs = van == math.floor(van) and tostring(math.floor(van)) or decimal(string.format("%.1f", van))
+        self.hudText = tx("GameTimeOf", secs, vs) .. (slips > 0 and (DOT .. tx("GameSlips", math.floor(slips))) or "")
+    end
+    local tw = label(self, self.hudText, cx, by, 0, bh, C.bright, F.h13)
+    local idleX = cx + tw + px(16)
+    local idleW = x + w - px(14) - idleX
+    if idleW > px(60) then
+        if self.idleW ~= idleW then
+            self.idleW = idleW
+            self.idleText = T.fit(self.D.tIdle, F.b13, idleW)
+        end
+        label(self, self.idleText, idleX, by, idleW, bh, C.dim, F.b13, "right")
+    end
+end
+
+-- KIT --------------------------------------------------------------------------------------------
+
+local NOW_C = {r = 1, g = 1, b = 1}   -- (the pulsing frame's colour, worked out each frame)
+
+function P:drawTile(t, x, y, s, focusPart, focusMood, now)
+    local C = T.color
+    local fit, nowFit, unfit = false, false, false
+    if focusMood then
+        fit = (focusMood.id == "BLEEDING" and t.wrap) or (t.mood ~= nil and (t.mood == focusMood.id
+            or (focusMood.id == "STRESS" and t.mood == "PANIC")))
+        unfit = not fit
+    elseif focusPart then
+        fit = t.fit[focusPart] == true
+        nowFit = t.now[focusPart] == true
+        unfit = not fit
+    end
+    local a = unfit and 0.3 or 1
+    T.rect(self, x, y, s, s, C.cell, a)
+    T.border(self, x, y, s, s, C.line, a)
+    T.rect(self, x + 1, y + 1, s - 2, s - 2, fit and X.fitBg or X.med, a)
+    if fit then T.rect(self, x + px(3), y + px(3), s - px(6), s - px(6), C.accent, 0.12 * a) end
+    local fc = C.tileFrame
+    if nowFit then
+        local p = 0.5 - 0.5 * math.cos(now / 1100 * 2 * math.pi)
+        fc = T.mixInto(NOW_C, C.accent, X.now, p)
+    elseif fit then
+        fc = C.accent
+    end
+    frame2(self, x + 1, y + 1, s - 2, s - 2, fc, a)
+    T.itemIcon(self, t.item, x + px(8), y + px(8), px(48), a)
+    if t.bag then T.itemIcon(self, t.bag, x + px(4), y + px(4), px(18), a) end
+    if t.countText then
+        T.outlinedRight(self, t.countText, x + s - px(6), y + s - px(3) - T.fontH(F.h15), C.bright, F.h15, a)
+    end
+end
+
+function P:drawKit(m, D, now)
+    local x0, y0, w, h = m.rx, m.ky, m.rw, m.kh
+    local C = T.color
+    panel(self, x0, y0, w, h)
+    spaced(self, D.tKit, x0 + px(16), y0 + px(14), 0, px(28), C.bright, F.ptitle, px(1.2), "left")
+    label(self, D.tKitNote, x0, y0 + px(18), w - px(16), px(22), C.dim, F.b15, "right")
+    if D.kitEmpty then label(self, D.kitEmpty, x0 + px(16), y0 + px(54), 0, px(20), C.dim, F.b15) end
+    local focusMood = self.moodHover
+    local focusPart = nil
+    if not focusMood then
+        focusPart = self.hoverPart or self.extPart or self.sel
+        if focusPart and not D.byIndex[focusPart] then focusPart = nil end
+    end
+    local s = px(64)
+    for _, gr in ipairs(D.kit) do
+        local gx, gy = x0 + px(16 + gr.x), y0 + px(54 + gr.y)
+        label(self, gr.title, gx, gy, 0, px(16), C.dim, F.h13)
+        for j = 1, gr.n do
+            local t = gr.tiles[j]
+            local tx_, ty_ = gx + (j - 1) * px(63), gy + px(24)
+            self:drawTile(t, tx_, ty_, s, focusPart, focusMood, now)
+            hit(self, "kit", tx_, ty_, s, s, t.key, t)
+        end
+    end
+    -- the box beside: the thing under the mouse, or how to treat
+    local ix, iy, iw, ih = x0 + px(628), y0 + px(54), w - px(628) - px(16), px(206)
+    T.rect(self, ix, iy, iw, ih, C.screen)
+    T.border(self, ix, iy, iw, ih, C.line)
+    local cx, cy = ix + px(16), iy + px(14)
+    local t = self.tileHover
+    if t then
+        local hn = self:itemHint(t)
+        local nw = label(self, hn.name, cx, cy, 0, px(24), C.bright, F.t20)
+        if hn.count then label(self, hn.count, cx + nw, cy, 0, px(24), C.dim, F.h18) end
+        cy = cy + px(26)
+        label(self, hn.where, cx, cy, 0, px(18), C.dim, F.b14)
+        cy = cy + px(28)
+        for _, l in ipairs(hn.desc) do
+            label(self, l, cx, cy, 0, px(21), C.text, F.b16)
+            cy = cy + px(21)
+        end
+        cy = cy + px(10)
+        for _, l in ipairs(hn.use) do
+            label(self, l, cx, cy, 0, px(20), hn.useC, F.b15)
+            cy = cy + px(20)
+        end
+    else
+        spaced(self, D.tHowTitle, cx, cy, 0, px(22), C.dim, F.h15, px(0.6), "left")
+        cy = cy + px(30)
+        for _, l in ipairs(self.howLines or {}) do
+            label(self, l, cx, cy, 0, px(20), C.dim, F.b15)
+            cy = cy + px(20)
+        end
+    end
+end
+
+-- The frame ------------------------------------------------------------------------------------
+
+function P:prerender()
+    local player = self:player()
+    if not player then return end
+    -- (a panel made by an older copy of this file, kept over the DEV reloader: its new parts)
+    if not self.hitPool then self.hitPool, self.nHits, self.view, self.anim = {}, 0, {}, self.anim or {} end
+    local m = self:metrics()
+    local now = getTimestampMs()
+    self.mx, self.my = self:getMouseX(), self:getMouseY()
+    self.mouseIn = self:isMouseOver() or (self.model ~= nil and self.model:isMouseOver())
+    local menu = getPlayerContextMenu(self.playerNum)
+    self.menuOpen = menu ~= nil and menu:isAnyVisible()
+    -- what is under the mouse (by last frame's places; kept while a menu is open)
+    if not self.menuOpen then
+        local h = self.mouseIn and hitAt(self, self.mx, self.my) or nil
+        if h then self.hvKind, self.hvA, self.hvB = h.kind, h.a, h.b
+        else self.hvKind, self.hvA, self.hvB = nil, nil, nil end
+    end
+    self.nHits = 0
+    -- the step being played: its frame (the mouse on the picture, its button)
+    local s = G.session(player)
+    if s then
+        local dt = math.min(0.1, math.max(0, (now - (self.tickMs or now)) / 1000))
+        local down = self.gameDown == true and isMouseButtonDown(0)
+        G.tick(player, self.mx - (self.picX or 0), self.my - (self.picY or 0), down, self.gamePressed == true, dt)
+        self.gamePressed = false
+    end
+    self.tickMs = now
+    -- the character turned by the right button held on the body
+    if self.rmbOn then
+        if isMouseButtonDown(1) and self.model then
+            local steps = math.floor((self.mx - self.rmbX) / px(ROT_PX) + 0.5)
+            if steps ~= 0 then self.rmbMoved = true end
+            local i = ((self.rmbDir - 1 + steps) % 8) + 1
+            if self.rmbI ~= i then
+                self.rmbI = i
+                self.model.knoxDir = DIRS[i] ~= IsoDirections.S and DIRS[i] or nil
+                self.model:setDirection(DIRS[i])
+            end
+        else
+            self.rmbOn = nil
+        end
+    end
+    local D = self:refresh(player)
+    -- what the mouse is on, as the panels light it
+    local kind = self.hvKind
+    self.extPart = (kind == "imp" or kind == "loss") and self.hvA or nil
+    self.lossPart = kind == "loss" and self.hvA or nil
+    self.moodHover = kind == "mood" and D.moods[self.hvA] or nil
+    self.tileHover = kind == "kit" and self.hvB or nil
+    local sub = (s and s.games) and D.tPlaying or D.tDoing
+    self.subPlaying = sub
+
+    self:drawState(m, D)
+    self:drawBody(m, D, player)
+    panel(self, m.rx, 0, m.rw, m.th)
+    local rec = self.sel and self.selRec
+    if rec then self:drawSelected(m, D, rec, player, now) else self:drawList(m, D) end
+    self:drawKit(m, D, now)
+end
+
+function P:render()
+    local m, D = self.m, self.D
+    if not (m and D and self:player()) then return end
+    self:drawBodyOver(m, D)
+    self:drawCard(m, D)
+end
+
+-- Doing ------------------------------------------------------------------------------------------
+
+--- Puts a part on the table (nil: none; one with nothing wrong: none either).
+function P:select(index)
+    local rec = index and self.D and self.D.byIndex[index] or nil
+    local was = self.sel
+    self.sel = rec and index or nil
+    self.selRec = rec
+    self.dirty = true
+    if self.sel ~= was then getSoundManager():playUISound("UIActivateButton") end
+end
+
+--- A step of the part on the table, started (its mini-game with it).
+function P:doStep(player, i, prefer)
+    local rec = self.selRec
+    local s = rec and rec.steps[i]
+    if not s or s.skipped then return end
+    if s.done then
+        -- (the author 2026-11-11: a done step clicked is taken back - the bandage comes off)
+        -- (the author 2026-11-11: with its mini-game too, as every step)
+        if not Care.undoable(rec.bp, s.id) then return end
+        if G.start(self, player, rec, "x" .. s.id, nil) then
+            if s.id == "stitch" then W.forgetStitch(player, rec.index) end
+            self.dirty = true
+        end
         return
     end
-    local kgap = 4
-    local cap = math.max(1, math.floor((iw + kgap) / (ts + kgap)))
-    local dragged = KnoxDrag.isActive() and KnoxDrag.entity and KnoxDrag.entity.fromKit and KnoxDrag.entity.item
-    for i, g in ipairs(kit) do
-        if i > cap then break end
-        local tx0 = ix + (i - 1) * (ts + kgap)
-        local overflow = (i == cap and #kit > cap)
-        local hot = self.hover and self.hover.kind == "kit" and self.hover.group.type == g.type
-        local helps = selBp and Care.treats(player, selBp, g.item)
-        local ka = (dragged and dragged:getFullType() == g.type and g.count == 1) and 0.4 * a or a
-        T.rect(self, tx0, ty, ts, ts, C.cell, T.slotAlpha() * a)
-        T.rect(self, tx0, ty, ts, ts, T.category[T.categoryOf(g.item)] or T.category.med, ka)
-        if overflow then
-            T.inkCentre(self, "+" .. (#kit - cap + 1), tx0, ty, ts, ts, C.text.r, C.text.g, C.text.b, a, T.fontCaps)
-            T.border(self, tx0, ty, ts, ts, C.tileEdge, a)
-        else
-            local side = math.floor(ts * 0.72)
-            ISInventoryItem.renderItemIcon(self, g.item, tx0 + math.floor((ts - side) / 2), ty + math.floor((ts - side) / 2), ka, side, side)
-            if g.count > 1 then
-                T.outlinedRight(self, string.char(215) .. g.count, tx0 + ts - 4, ty + ts - T.fontTileH - 3, C.bright, T.fontTile, a)
-            end
-            T.tileFrame(self, tx0, ty, ts, ts, hot and C.tileHover or C.tileFrame, a)
-            -- it would treat the chosen wound's part: a breathing sand frame
-            if helps then T.target(self, tx0 + 2, ty + 2, ts - 4, ts - 4) end
-            if KnoxContextMenu and KnoxContextMenu.isTarget(g.item) then KnoxContextMenu.drawTarget(self, tx0, ty, ts, ts) end
-            self:hit("kit", tx0, ty, ts, ts, {group = g})
-        end
-    end
+    if not Care.stepCan(Care.reachable(player), rec.bp, s.id) then return end
+    if G.start(self, player, rec, s.id, prefer) then self.dirty = true end
 end
 
--- The mouse ---------------------------------------------------------------------------------
+--- The quick treatment of a part: its steps one after another, each with its mini-game.
+function P:quick(player, index)
+    if G.session(player) then return end
+    local bps = player:getBodyDamage():getBodyParts()
+    local bp = bps:get(index)
+    local rec = W.record(player, index, bp)
+    if not (rec and rec.cur) then return end
+    if not Care.stepCan(Care.reachable(player), bp, rec.cur.id) then
+        if HaloTextHelper and HaloTextHelper.addBadText then HaloTextHelper.addBadText(player, tx("NothingToQuick")) end
+        return
+    end
+    local panel = self
+    G.start(self, player, rec, rec.cur.id, nil, function()
+        local p = panel:player()
+        if p then panel:quick(p, index) end
+    end)
+    self.dirty = true
+end
+
+--- A step over (KnoxHealthGames): the tab reads anew.
+function P:stepOver(s, done)
+    self.dirty = true
+    self.gameDown = false
+end
+
+--- Esc: the step being played stops; else the part goes off the table. False: nothing to do here.
+function P:escape()
+    local player = self:player()
+    if player and G.cancel(player) then
+        self.dirty = true
+        return true
+    end
+    if self.sel then
+        self:select(nil)
+        return true
+    end
+    return false
+end
+
+-- a click on the kit's thing: the step of the part on the table with it; twice on a pill: taken
+function P:kitClick(player, t)
+    local now = getTimestampMs()
+    if t.whole then
+        if self.lastKit == t.key and now - (self.lastKitMs or 0) < DBL_MS then
+            self.lastKit = nil
+            Care.take(player, t.item)
+            self.dirty = true
+            getSoundManager():playUISound("UIActivateButton")
+        else
+            self.lastKit, self.lastKitMs = t.key, now
+        end
+        return
+    end
+    self.lastKit = nil
+    local rec = self.selRec
+    if not (self.sel and rec) then return end
+    local pick
+    for i, s in ipairs(rec.steps) do
+        if not s.done and not s.skipped and W.stepTakes(s.id, t.item) then
+            if s == rec.cur then pick = i break end
+            pick = pick or i
+        end
+    end
+    if pick then self:doStep(player, pick, t.g.items[1] or t.item) end
+end
+
+-- The bottom bar's hints (KnoxScreen.drawHints) ------------------------------------------------
+
+function P:hintsStamp()
+    local player = self:player()
+    return (player and G.session(player)) and "health+esc" or "health"
+end
+
+function P:hints()
+    local list = {
+        {key = tx("KeyLmb"), label = tx("HintTable")},
+        {key = tx("KeyShiftLmb"), label = tx("QuickShort")},
+        {key = tx("KeyRmb"), label = tx("HintActions")},
+        {key = tx("KeyRmbDrag"), label = tx("HintRotate")},
+    }
+    local player = self:player()
+    if player and G.session(player) then table.insert(list, {key = tx("KeyEsc"), label = tx("HintCancel")}) end
+    return list
+end
+
+-- The mouse ------------------------------------------------------------------------------------
 
 function P:onMouseDown(x, y)
-    local h = self:hitAt(x, y)
-    self.press = {hit = h, x = getMouseX(), y = getMouseY()}
+    local h = hitAt(self, x, y)
+    self.pressKind, self.pressA = h and h.kind or nil, h and h.a or nil
+    self.pressPart = self.hoverPart
+    self.pressBody = self.m ~= nil and x >= self.m.bx and x < self.m.bx + self.m.bw
+    local player = self:player()
+    if player and G.session(player) and h and h.kind == "pic" then
+        self.gameDown, self.gamePressed = true, true
+    end
     return true
 end
 
-function P:onMouseMove(dx, dy)
-    local p = self.press
-    if p and p.hit and p.hit.kind == "kit" and not KnoxDrag.isActive() and isMouseButtonDown(0) then
-        if math.abs(getMouseX() - p.x) + math.abs(getMouseY() - p.y) >= DRAG_PX then
-            local g = p.hit.group
-            local item = g.items[1] or g.item
-            local w, h = KnoxFootprint.get(item)
-            KnoxDrag.start({item = item, items = {item}, w = w, h = h, r = 0, fromKit = true}, nil,
-                math.floor((w - 1) / 2), math.floor((h - 1) / 2))
-            self.press = nil
-        end
-    end
-end
-
-function P:onMouseMoveOutside(dx, dy)
-    self:onMouseMove(dx, dy)
-end
-
 function P:onMouseUpOutside(x, y)
-    self.press = nil
-end
-
---- Chooses a wound (again: back to the overview).
-function P:choose(w)
-    if not w or self.selWound == w.id then
-        self.selWound, self.selPart = nil, nil
-    else
-        self.selWound, self.selPart = w.id, w.index
-    end
-    self.scrollTo = 0
-    getSoundManager():playUISound("UIActivateButton")
-end
-
---- Does what a wound needs now: its quick treatment, a cover taken off, or the menu.
-function P:act(player, w, sx, sy)
-    if not w then return end
-    local t = w.todo
-    if t and t.cover then
-        Wd.removeCover(player, w.bp, t.cover)
-        getSoundManager():playUISound("UIActivateButton")
-    elseif t and not t.missing then
-        self:quick(player, w.bp)
-    else
-        Care.openMenu(player, w.bp, sx or getMouseX(), sy or getMouseY(), w.kind)
-    end
-    self.quickCache = nil
-end
-
-function P:quick(player, bp)
-    local steps = Care.quickTreat(player, bp)
-    self.quickCache = nil
-    if #steps == 0 then
-        if HaloTextHelper and HaloTextHelper.addBadText then HaloTextHelper.addBadText(player, tx("NothingToQuick")) end
-    else
-        getSoundManager():playUISound("UIActivateButton")
-    end
-end
-
--- the part's first wound (the list's order: the most urgent)
-function P:firstWound(index)
-    for _, w in ipairs(self.wounds or {}) do if w.index == index then return w end end
-    return nil
+    self.pressKind = nil
+    self.gameDown = false
 end
 
 function P:onMouseUp(x, y)
+    self.gameDown = false
     local player = self:player()
-    local hit = self:hitAt(x, y)
-    if KnoxDrag.isActive() then
-        local e = KnoxDrag.entity
-        KnoxDrag.cancel()
-        self.press = nil
-        local index = hit and (hit.kind == "part" or hit.kind == "badge") and hit.part
-        if index and e and e.item and player then
-            Care.drop(player, H.part(player, index), {e.item}, getMouseX(), getMouseY())
-            self.quickCache = nil
+    local kind, a = self.pressKind, self.pressA
+    self.pressKind = nil
+    if not (player and self.D) then return true end
+    local h = hitAt(self, x, y)
+    local session = G.session(player)
+    if kind and h and h.kind == kind and h.a == a then
+        if kind == "back" then
+            if session then G.cancel(player) end
+            self:select(nil)
+        elseif session then
+            -- (a step going: the rest of the tab waits)
+            return true
+        elseif kind == "imp" then
+            if isShiftKeyDown() then
+                self:select(a)
+                self:quick(player, a)
+            else
+                self:select(a)
+            end
+        elseif kind == "step" then
+            self:doStep(player, a)
+        elseif kind == "quick" and self.sel then
+            self:quick(player, self.sel)
+        elseif kind == "menu" and self.selRec then
+            Care.openMenu(player, self.selRec.bp, getMouseX(), getMouseY(), nil)
+        elseif kind == "kit" then
+            self:kitClick(player, h.b)
         end
         return true
     end
-    local p = self.press
-    self.press = nil
-    if not (p and p.hit and hit and player) or p.hit.kind ~= hit.kind then return true end
-    local k = hit.kind
-    if k == "badge" or k == "row" then
-        if hit.id ~= p.hit.id then return true end
-        if isShiftKeyDown() then self:act(player, hit.wound) else self:choose(hit.wound) end
-    elseif k == "rowbtn" and hit.id == p.hit.id then
-        self:act(player, hit.wound)
-    elseif k == "part" then
-        local w = self:firstWound(hit.part)
-        if isShiftKeyDown() then
-            if w then self:act(player, w) else self:quick(player, H.part(player, hit.part)) end
-        elseif w then
-            self:choose(w)
-        else
-            self.selWound, self.selPart = nil, nil
-        end
-    elseif k == "cardbtn" and hit.btn == p.hit.btn then
-        if hit.btn == "back" then
-            self.selWound, self.selPart = nil, nil
-            getSoundManager():playUISound("UIActivateButton")
-        elseif hit.btn == "menu" then
-            Care.openMenu(player, hit.wound.bp, getMouseX(), getMouseY(), hit.wound.kind)
-        elseif hit.btn == "do" then
-            self:act(player, hit.wound)
-        end
-    elseif k == "kit" and hit.group.type == p.hit.group.type then
-        -- a click on the kit's thing: used on the chosen wound's part
-        local w = self.selWound and self:wound(self.selWound)
-        if w then
-            if Care.treats(player, w.bp, hit.group.item) then
-                Care.drop(player, w.bp, {hit.group.items[1] or hit.group.item}, getMouseX(), getMouseY())
-                self.quickCache = nil
-            elseif HaloTextHelper and HaloTextHelper.addBadText then
-                HaloTextHelper.addBadText(player, tx("WontHelp"))
+    if kind or h or session then return true end
+    -- on the body: a part to the table (with Shift: treated at once), beside it: none
+    if self.pressBody then
+        local part = self.hoverPart
+        if part and part == self.pressPart then
+            if isShiftKeyDown() and self.D.byIndex[part] then
+                self:select(part)
+                self:quick(player, part)
+            else
+                self:select(part)
             end
+        elseif not part and not self.pressPart then
+            self:select(nil)
         end
     end
     return true
 end
 
 function P:onRightMouseDown(x, y)
+    local m = self.m
+    self.rmbOn, self.rmbMoved = nil, false
+    if m and x >= m.bx and x < m.bx + m.bw and not hitAt(self, x, y) and self.model then
+        local d = self.model.knoxDir or IsoDirections.S
+        local di = 1
+        for i, v in ipairs(DIRS) do if v == d then di = i break end end
+        self.rmbOn, self.rmbX, self.rmbDir, self.rmbI = true, x, di, di
+    end
     return true
 end
 
 function P:onRightMouseUp(x, y)
-    if KnoxDrag.isActive() then return true end
+    local moved = self.rmbMoved
+    self.rmbOn, self.rmbMoved = nil, false
+    if moved then return true end
     local player = self:player()
-    local hit = self:hitAt(x, y)
-    if not (player and hit) then return true end
-    local k = hit.kind
+    if not (player and self.D) then return true end
+    local h = hitAt(self, x, y)
+    local k = h and h.kind
+    local bps = player:getBodyDamage():getBodyParts()
     if k == "kit" then
-        local items = hit.group.items
-        if KnoxContextMenu then KnoxContextMenu.setTarget({items[1]}, self.playerNum) end
-        ISInventoryPaneContextMenu.createMenu(self.playerNum, true, {items[1]}, getMouseX(), getMouseY())
-    elseif hit.wound then
-        Care.openMenu(player, hit.wound.bp, getMouseX(), getMouseY(), hit.wound.kind)
-    elseif k == "part" then
-        Care.openMenu(player, H.part(player, hit.part), getMouseX(), getMouseY(), nil)
+        local item = h.b.g.items[1] or h.b.item
+        if KnoxContextMenu and KnoxContextMenu.setTarget then KnoxContextMenu.setTarget({item}, self.playerNum) end
+        ISInventoryPaneContextMenu.createMenu(self.playerNum, true, {item}, getMouseX(), getMouseY())
+    elseif k == "imp" or k == "loss" then
+        Care.openMenu(player, bps:get(h.a), getMouseX(), getMouseY(), nil)
+    elseif (k == "pic" or k == "step" or k == "quick" or k == "menu") and self.selRec then
+        Care.openMenu(player, self.selRec.bp, getMouseX(), getMouseY(), nil)
+    elseif not k and self.hoverPart then
+        Care.openMenu(player, bps:get(self.hoverPart), getMouseX(), getMouseY(), nil)
     end
     return true
 end
 
 function P:onMouseWheel(del)
-    local r = self.sideRect
-    if r and T.inRect(self:getMouseX(), self:getMouseY(), r) and (self.maxScroll or 0) > 0 then
-        self.scrollTo = clamp(self.scrollTo + del * T.cell * 1.5, 0, self.maxScroll)
+    local m = self.m
+    if not (m and not self.sel and (self.listMax or 0) > 0) then return true end
+    local x, y = self:getMouseX(), self:getMouseY()
+    if x >= m.rx and y < m.th then
+        self.listScroll = clamp((self.listScroll or 0) + del * px(56), 0, self.listMax)
     end
     return true
 end

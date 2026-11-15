@@ -286,8 +286,16 @@ local LIGHT_K = {[8] = 0.65}
 local SEE = 0.72
 local SEE_SOFT = 8
 
+-- (made once: the paint asks for them every frame)
+local maskPaths = {[true] = {}, [false] = {}}
 local function maskPath(female, index)
-    return TEX_DIR .. "hl_" .. (female and "f_" or "m_") .. (PART_BY_INDEX[index] or "") .. ".png"
+    local byG = maskPaths[female == true]
+    local p = byG[index]
+    if not p then
+        p = TEX_DIR .. "hl_" .. (female and "f_" or "m_") .. (PART_BY_INDEX[index] or "") .. ".png"
+        byG[index] = p
+    end
+    return p
 end
 
 --- Where each part's paint should be now: colours {[index] = {r, g, b, a}}, light
@@ -401,6 +409,89 @@ function M.layers(av, player, view)
             bones[#bones + 1] = v
         end
     end
+    return layers, bones
+end
+
+-- The health tab's table (its mockup health_v3's drawBody - the author, 2026-11-10) ---------------
+-- view.looks[index] = {style, c, k} (KnoxHealthWounds' look of the part's wound), view.hoverPart,
+-- view.selectedPart (on the table: the rest dimmed), view.glow[index] (a kit's thing would treat
+-- it, or a moodle under the mouse names it). Each part's wound has its light by its style -
+-- the bleeding beats with the ECG's heart and its blood runs down, an infection creeps, a
+-- fracture is scanned, glass glints, a healing breathes (Java KnoxHealthPaint, modes 10 +
+-- style, 5, 4, 3); everything eases as the mockup's (glow 5/s, hover and the kit 9/s).
+-- The layers' tables are kept on the model and filled again each frame (none made anew).
+local STYLE_N = {heal = 0, bleed = 1, infect = 2, fracture = 3, glass = 4, open = 5}
+
+local function addLayer(layers, n, path, r, g, b, a, soft, mode)
+    layers[n + 1], layers[n + 2], layers[n + 3], layers[n + 4] = path, r, g, b
+    layers[n + 5], layers[n + 6], layers[n + 7] = a, soft, mode
+    return n + 7
+end
+
+local function ease(t, i, target, k)
+    local v = t[i] or 0
+    v = v + ((target or 0) - v) * k
+    if v < 0.003 and (target or 0) == 0 then v = 0 end
+    t[i] = v
+    return v
+end
+
+function M.tableLayers(av, player, view)
+    local now = getTimestampMs()
+    local dt = math.min(100, now - (av.knoxPaintMs or now)) / 1000
+    av.knoxPaintMs = now
+    local e, e2 = 1 - math.exp(-dt * 9), 1 - math.exp(-dt * 5)
+    local E = av.knoxE
+    if not E then
+        E = {glow = {}, hov = {}, sel = {}, xr = {}, itm = {}, c = {}, st = {}, dim = 0, layers = {}, bones = {}}
+        av.knoxE = E
+    end
+    local female = player:isFemale()
+    local layers, bones = E.layers, E.bones
+    local n, nb = 0, 0
+    local looks = view.looks or {}
+    local bps = player:getBodyDamage():getBodyParts()
+    for index = 0, 16 do
+        local lk = looks[index]
+        local glow = ease(E.glow, index, lk and lk.k or 0, e2)
+        local hov = ease(E.hov, index, view.hoverPart == index and 1 or 0, e)
+        local sel = ease(E.sel, index, view.selectedPart == index and 1 or 0, e2)
+        local itm = ease(E.itm, index, view.glow and view.glow[index] and 1 or 0, e)
+        local fracture = lk and lk.style == "fracture"
+        local xr = ease(E.xr, index, (fracture and (hov > 0.5 or view.selectedPart == index)) and 1 or 0, e2)
+        if lk then
+            E.c[index], E.st[index] = lk.c, STYLE_N[lk.style] or 5
+        end
+        local path = (glow > 0 or hov > 0 or itm > 0 or xr > 0 or sel > 0) and maskPath(female, index) or nil
+        local bp = bps:get(index)
+        if path and bp:getHealth() <= 0 then n = addLayer(layers, n, path, DESTROYED.r, DESTROYED.g, DESTROYED.b, DESTROYED_A, SOFT, 0) end
+        if glow > 0 and E.c[index] then
+            local c = E.c[index]
+            n = addLayer(layers, n, path, c.r, c.g, c.b, glow * (1 + 0.45 * hov), SOFT, 10 + E.st[index])
+            if E.st[index] == 1 and lk and lk.style == "bleed" then n = addLayer(layers, n, path, 0, 0, 0, glow, SOFT, 5) end
+        end
+        if itm > 0 then n = addLayer(layers, n, path, 0, 0, 0, itm, LIGHT_SOFT, 4) end
+        if hov > 0 then
+            -- (lighter under the mouse - less over a wound's own light, as the mockup)
+            local l = hov * HOVER_LIGHT * (glow > 0.1 and 0.5 or 1) * (LIGHT_K[index] or 1)
+            n = addLayer(layers, n, path, LIGHT.r, LIGHT.g, LIGHT.b, l, LIGHT_SOFT, 1)
+        end
+        if xr > 0 then
+            n = addLayer(layers, n, path, 0, 0, 0, SEE * xr, SEE_SOFT, 2)
+            bones[nb + 1], bones[nb + 2], bones[nb + 3], bones[nb + 4] = index * 3, xr, index * 3 + 2, xr
+            nb = nb + 4
+        end
+    end
+    -- the part on the table: all the rest darker
+    E.dim = E.dim + (((view.selectedPart ~= nil) and 1 or 0) - E.dim) * e2
+    if E.dim > 0.003 then
+        local selIndex = view.selectedPart or E.dimPart
+        if view.selectedPart then E.dimPart = view.selectedPart end
+        if selIndex then n = addLayer(layers, n, maskPath(female, selIndex), 0, 0, 0, E.dim, LIGHT_SOFT, 3) end
+    end
+    -- (what is left from a longer frame before: gone)
+    for i = n + 1, #layers do layers[i] = nil end
+    for i = nb + 1, #bones do bones[i] = nil end
     return layers, bones
 end
 
@@ -531,14 +622,16 @@ function M.update(av, player, x, y, w, h, view)
                 local sk = skeleton()
                 if sk then desc:setWornItem(sk:getBodyLocation(), sk) end
                 av:setSurvivorDesc(desc)
-                av:setDirection(IsoDirections.S)
+                av:setDirection(av.knoxDir or IsoDirections.S)
                 av:setAnimSetName(av.knoxAction and "player" or "player-avatar")
                 av:setState("idle")
             end)
             if not ok then report("look", err) end
         end
         local ok, err = pcall(function()
-            local layers, bones = M.layers(av, player, view)
+            local layers, bones
+            if view.looks then layers, bones = M.tableLayers(av, player, view)
+            else layers, bones = M.layers(av, player, view) end
             knoxHealthPaint(av.javaObject, layers, bones)
         end)
         if not ok then report("paint", err) end
@@ -551,7 +644,7 @@ function M.update(av, player, x, y, w, h, view)
         av.knoxDescMs, av.knoxSig, av.knoxFor = now, sig, player
         local ok, err = pcall(function()
             av:setSurvivorDesc(buildDesc(player, paint))
-            av:setDirection(IsoDirections.S)
+            av:setDirection(av.knoxDir or IsoDirections.S)
             av:setAnimSetName(av.knoxAction and "player" or "player-avatar")
             av:setState("idle")
         end)

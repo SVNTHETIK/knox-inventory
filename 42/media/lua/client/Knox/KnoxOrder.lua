@@ -220,10 +220,14 @@ end
 --- keeping off the `avoid` cells.
 local function findFrom(L, e, fromY, avoid)
     local rows = L.baseRows or L.rows
+    -- (no limit: not through the full rows on top - KnoxGrid's Layout:findFree, which O.placeNew
+    -- asks first, keeps where they end; a long grid's new things were looked for from row 0 twice)
+    local y0 = math.max(0, fromY or 0)
+    if L.free and L.top and L.top > y0 then y0 = L.top end
     for _, r in ipairs({0, 1}) do
         local w, h = KnoxGrid.dims(e, r)
         if r == 0 or w ~= h then
-            for y = math.max(0, fromY or 0), rows - h do
+            for y = y0, rows - h do
                 for x = 0, L.cols - w do
                     if L:fits(x, y, w, h) then
                         local clear = true
@@ -618,6 +622,48 @@ function O.sort(view, rule)
             KnoxGrid.writePlace(e, L.key, e.x, e.y, e.r)
         end
     end
+    getSoundManager():playUISound("UIActivateButton")
+    view:markDirty()
+end
+
+--- Compact (no limit only, KnoxGrid.free; the author 2026-11-15, mockup K1, way "a"): the
+--- things go up with no holes. Each, in reading order (by row, then column), takes the first
+--- free place from the top as it lies (not turned): a small thing may fill a hole above a
+--- bigger one. The empty rows left at the bottom go when the grid is built again. Locked tiles
+--- and moves in progress stay where they are. Within one container it takes no game time.
+function O.compact(view)
+    if KnoxSearch and KnoxSearch.busy(view.container) then return end   -- not while it is being searched
+    local L = view.layout
+    if not (L and L.free) then return end
+    local tiles = {}
+    for _, e in ipairs(L.placed) do
+        if KnoxSearch and KnoxSearch.isHidden(e.item) then return end
+        if not e.ghost and not e.reserved and not e.overflow and not KnoxActions.isLocked(e) then table.insert(tiles, e) end
+    end
+    table.sort(tiles, function(a, b)
+        if a.y ~= b.y then return a.y < b.y end
+        return a.x < b.x
+    end)
+    local fresh = KnoxGrid.emptyLike(L)
+    for _, e in ipairs(L.placed) do
+        if e.ghost or e.reserved or KnoxActions.isLocked(e) then fresh:occupy(e, e.x, e.y, e.r) end
+    end
+    local moved = {}
+    for _, e in ipairs(tiles) do
+        local x0, y0, r = e.x, e.y, e.r or 0
+        local w, h = KnoxGrid.dims(e, r)
+        local fx, fy = nil, nil
+        for y = 0, fresh:scanRows(h) - h do
+            for x = 0, fresh.cols - w do
+                if fresh:fits(x, y, w, h) then fx, fy = x, y break end
+            end
+            if fx then break end
+        end
+        fx, fy = fx or x0, fy or y0
+        fresh:occupy(e, fx, fy, r)
+        if fx ~= x0 or fy ~= y0 then table.insert(moved, e) end
+    end
+    for _, e in ipairs(moved) do KnoxGrid.writePlace(e, L.key, e.x, e.y, e.r) end
     getSoundManager():playUISound("UIActivateButton")
     view:markDirty()
 end

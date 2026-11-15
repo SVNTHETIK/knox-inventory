@@ -31,6 +31,25 @@ F.CELLS_PER_CAPACITY = 2     -- cells of a bag's grid per unit of its capacity
 F.CELLS_PER_CAPACITY_WORLD = 3   -- furniture, car boots, seats: roomier - there the game's weight limit decides
 F.STACK_KG = 2               -- what a cell of small things may weigh
 F.NEST_CAPACITY = 5          -- bags up to this capacity may lie in a bag with things in them
+
+-- Hard containers keep their size with things in them (the author 2026-11-14: "ящик для
+-- инструментов, аптечки и прочие подобные не увеличивались"): a soft bag swells as it is filled
+-- (KnoxGrid.bagFootprint), a box, a case, a kit does not. By the name of its type.
+local RIGID = {"box", "case", "kit", "cooler", "jar", "humidor", "basket", "bucket", "hollowbook",
+    "photoalbum", "parcel", "present"}
+local rigidOf = {}
+function F.isRigid(fullType)
+    local r = rigidOf[fullType]
+    if r == nil then
+        local name = string.lower(string.match(fullType or "", "[^%.]+$") or "")
+        r = false
+        for _, k in ipairs(RIGID) do
+            if string.find(name, k, 1, true) then r = true break end
+        end
+        rigidOf[fullType] = r
+    end
+    return r
+end
 -- How roomy bags and pockets are: the rules' cells (two a unit of capacity), and the
 -- player's own slider over them (settings, "Size of bags and pockets", 50..200 %).
 -- (2026-10-19: tried a quarter more, then 2.5 a unit, then 0.875 - all taken back by

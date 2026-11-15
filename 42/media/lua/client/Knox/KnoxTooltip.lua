@@ -14,9 +14,10 @@ K.playerNum = 0
 --- `quiet`: the item is under the mouse (the slots show where it would go), but
 --- its tooltip is not shown - it has a panel of its own beside it (a magazine,
 --- a gun, a flashlight: the tooltip lay over the panel's cells, 2026-10-30).
-function K.want(item, playerNum, quiet)
+function K.want(item, playerNum, quiet, stack)
     K.wanted = item
     K.quiet = quiet == true
+    K.stack = stack == true   -- a stack of unlike things: the key's hint says it opens the stack's list
     K.playerNum = playerNum or 0
 end
 
@@ -174,8 +175,28 @@ local function descriptionOf(item)
     return text
 end
 
+--- No character in the world (the main menu: a news post's live grids, update 12): the game's
+--- lines of a weapon and of food ask IsoPlayer.getInstance() for them and throw - the author's
+--- error window 2026-11-15. Those are made here instead (worldRows), from the same numbers.
+local function worldless(item)
+    return getPlayer() == nil and (instanceof(item, "HandWeapon") or instanceof(item, "Food"))
+end
+
 local function doTooltip(tip, noTitle, wrapWidth, fade)
     if not tip.item then return false end
+    if worldless(tip.item) then
+        -- the header only from the game: its lines come from worldRows
+        local styled = T.javaFonts and isItem(tip.item) and knoxTooltipBegin("body", "title", fontSize(), itemName(tip))
+        if styled then
+            if noTitle then knoxTooltipHideTitle(true) end
+            tip.knoxLine = knoxTooltipLine()
+            tip.knoxPadY = knoxTooltipPadY()
+            knoxTooltipEnd()
+        end
+        tip.tooltip:setWidth(50)
+        tip.tooltip:setHeight(0)
+        return styled
+    end
     local styled = false
     if T.javaFonts and isItem(tip.item) then
         styled = knoxTooltipBegin("body", "title", fontSize(), itemName(tip))
@@ -250,8 +271,12 @@ local function headerFor(item, name, nameW)
     for _, l in ipairs(h.lines) do nameW = math.max(nameW, T.measure(h.nameF, l)) end
     h.w = h.inner * 2 + h.icon + 10 + math.max(nameW, T.measure(h.subF, h.sub))
     h.h = math.max(h.icon, #h.lines * h.nameH + h.subH) + h.inner * 2
-    h.color = T.category[T.categoryOf(item)]
-    -- food: frozen, cooking, done, burning - the plate takes that color, as its tile does
+    -- food: frozen, cooking, done, burning; hot or cold - the plate takes that color, as its
+    -- tile does (the author 2026-11-14: the frost was missing here)
+    h.color = T.itemColor(item)
+    -- empty or broken: the cell's grey, as its tile is (the author 2026-11-14)
+    local lv = T.itemLevel(item)
+    if lv and lv <= 0 and lv ~= T.LEVEL_UNKNOWN then h.color = T.color.cell end
     h.item = item
     return h
 end
@@ -288,7 +313,7 @@ local function drawHeader(ui, hd, bx, by, bw, alpha)
     alpha = alpha or 1
     local bh = hd.h
     local edge = lighten(hd.color, 0.3)
-    T.rect(ui, bx, by, bw, bh, hd.color, alpha)
+    T.glowRect(ui, bx, by, bw, bh, hd.color, alpha, 2)   -- (the category's glow, as its tile - 2026-11-14)
     if hd.item then T.cookBar(ui, bx, by, bw, bh, hd.item, 0.8 * alpha) end
     T.border(ui, bx, by, bw, bh, edge, alpha)
     T.border(ui, bx + 1, by + 1, bw - 2, bh - 2, edge, alpha)
@@ -359,18 +384,25 @@ local HINT_ROW_GAP = 6
 -- has the panel - a magazine, a gun, a flashlight, a radio on batteries. After
 -- the two hints when there is room, else in a row of its own under them (the
 -- tooltip is no wider for it: Knox's item menu takes its width).
-local quickCache, quickStamp
-local function quickHint()
+-- (the same key opens a stack's list of what is in it - the author 2026-11-13: "для всех
+-- выпадающих списков стопок сделаем его появление на SHIFT"; its own words then)
+local quickCache, stackCache, quickStamp
+local function quickHint(stack)
     local stamp = KnoxControls and KnoxControls.stamp or 0
     if quickStamp ~= stamp then
-        quickStamp, quickCache = stamp, false
+        quickStamp, quickCache, stackCache = stamp, false, false
         local g = KnoxControls and KnoxControls.get("quickItems") or ""
         if g ~= "" then
-            local h = {key = KnoxControls.label(g), label = getText("IGUI_Knox_TipHint_quickItems")}
+            local key = KnoxControls.label(g)
+            local h = {key = key, label = getText("IGUI_Knox_TipHint_quickItems")}
             h.w = T.keyW(h.key) + 6 + T.measure(T.fontText, h.label)
             quickCache = h
+            local s = {key = key, label = getText("IGUI_Knox_TipHint_stackKinds")}
+            s.w = T.keyW(s.key) + 6 + T.measure(T.fontText, s.label)
+            stackCache = s
         end
     end
+    if stack then return stackCache or nil end
     return quickCache or nil
 end
 
@@ -469,9 +501,45 @@ local function cuRows(item, rows)
     end
 end
 
+--- The game's lines of a weapon and of food with no character in the world (see worldless):
+--- the same rows and numbers as HandWeapon / Food DoTooltip (42.22) - bars for the condition,
+--- the damage ((min + max) / 5) and the range (max / 40); the rounds, hunger, thirst... as values.
+local function worldRows(item, rows)
+    if getPlayer() ~= nil then return end
+    if instanceof(item, "HandWeapon") then
+        local max = item:getConditionMax()
+        if max and max > 0 then table.insert(rows, {label = getText("Tooltip_weapon_Condition"), frac = item:getCondition() / max}) end
+        if item:getMaxDamage() > 0 then
+            table.insert(rows, {label = getText("Tooltip_weapon_Damage"), frac = (item:getMaxDamage() + item:getMinDamage()) / 5})
+        end
+        if item:isRanged() then
+            table.insert(rows, {label = getText("Tooltip_weapon_Range"), frac = item:getMaxRange() / 40})
+            local ammo = item:getAmmoType()
+            local name = ammo and getItemNameFromFullType(ammo:getItemKey())
+            if name then
+                table.insert(rows, {label = name .. ":", value = item:getCurrentAmmoCount() .. " / " .. item:getMaxAmmo()})
+            end
+        end
+    elseif instanceof(item, "Food") then
+        local function add(key, v)
+            local n = math.floor(v * 100 + (v < 0 and -0.5 or 0.5))
+            if n ~= 0 then table.insert(rows, {label = getText(key), value = (n > 0 and "+" or "") .. n}) end
+        end
+        add("Tooltip_food_Hunger", item:getHungerChange())
+        add("Tooltip_food_Thirst", item:getThirstChange())
+        add("Tooltip_food_Endurance", item:getEnduranceChange())
+        add("Tooltip_food_Stress", item:getStressChange())
+        add("Tooltip_food_Boredom", item:getBoredomChange())
+        add("Tooltip_food_Unhappiness", item:getUnhappyChange())
+    end
+end
+
 local function extraRows(item)
     local rows = {}
-    if isItem(item) then cuRows(item, rows) end
+    if isItem(item) then
+        worldRows(item, rows)
+        cuRows(item, rows)
+    end
     return rows
 end
 
@@ -486,6 +554,11 @@ local function drawMeterRow(ui, row, x, y, w, a)
     local fh = T.fontH(T.fontText)
     local label = row.label or ""
     T.text(ui, label, x, y, LABEL, T.fontText, a)
+    -- (a value instead of a meter: right-aligned, as the game's values)
+    if row.value then
+        T.text(ui, row.value, x + w - T.measure(T.fontText, row.value), y, T.color.bright, T.fontText, a)
+        return
+    end
     local bx = x + T.measure(T.fontText, label) + 12
     local bw = x + w - bx
     if bw < 20 then return end
@@ -567,7 +640,8 @@ local function renderTip(self, fold)
         -- a stats line wider than planned widened the plate: refill the header at that width
         if W > baseW then hd = headerAt(W) end
         -- the quick items' key: after the hints, or under them
-        quick = hasQuick(self) and quickHint() or nil
+        if K.stack and K.wanted == self.item then quick = quickHint(true)
+        else quick = hasQuick(self) and quickHint(false) or nil end
         if quick and footW + HINT_GAP + quick.w > W - m * 2 then
             quickRow = true
             footH = footH + T.fontTileH + 4 + HINT_ROW_GAP

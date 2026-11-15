@@ -551,7 +551,7 @@ local function drawSlotDrag(hb)
     local mx, my = getMouseX() - hb:getAbsoluteX(), getMouseY() - hb:getAbsoluteY()
     local x, y = math.floor(mx - size / 2), math.floor(my - size / 2)
     local item = hb.attachedItems[sd.index]
-    T.rect(hb, x, y, size, size, item and T.category[T.categoryOf(item)] or T.color.cell, 0.9)
+    if item then T.dragTile(hb, item, x, y, size, size, nil, 0.9) else T.rect(hb, x, y, size, size, T.color.cell, 0.9) end
     if item then
         local side = math.floor(size * 0.66)
         ISInventoryItem.renderItemIcon(hb, item, x + math.floor((size - side) / 2), y + math.floor((size - side) / 2), 1, side, side)
@@ -735,7 +735,7 @@ function ISHotbar:render()
     local sx, sy = 0, 0
     if KnoxGridView and KnoxGridView.strain then sx, sy = KnoxGridView.strain(KnoxGrid.weightOf(d.item)) end
     local x, y = math.floor(mx - size / 2) + sx, math.floor(my - size / 2) + sy
-    T.rect(self, x, y, size, size, T.category[T.categoryOf(d.item)], 0.85)
+    T.dragTile(self, d.item, x, y, size, size, nil, 0.85)
     local side = math.floor(size * 0.66)
     ISInventoryItem.renderItemIcon(self, d.item, x + math.floor((size - side) / 2), y + math.floor((size - side) / 2), 1, side, side)
     T.tileFrame(self, x, y, size, size, T.color.accent)

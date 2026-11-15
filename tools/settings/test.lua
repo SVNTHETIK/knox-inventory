@@ -63,10 +63,16 @@ run("every setting once", function()
             end
         end
     end
-    for _, s in ipairs(T.LOOK) do check("slider " .. s.key, seen["slider:" .. s.key]) end
+    for _, s in ipairs(T.LOOK) do
+        -- (vp.scale: only with Viewpoint's panel - none here)
+        if s.only == "viewpoint" then check("hidden slider " .. s.key, not seen["slider:" .. s.key])
+        else check("slider " .. s.key, seen["slider:" .. s.key]) end
+    end
     for _, s in ipairs(T.SWITCHES) do
         -- (vp.panel: only with Viewpoint's panel - none here)
+        -- (health.games: only while the Health module is on - hidden for now, 2026-11-10)
         if s.only == "viewpoint" then check("hidden " .. s.key, not seen["switch:" .. s.key])
+        elseif s.only == "health" then check("health only " .. s.key, (seen["switch:" .. s.key] == true) == T.on("health"))
         else check("switch " .. s.key, seen["switch:" .. s.key]) end
     end
     for _, s in ipairs(T.CHOICES) do check("choice " .. s.key, seen["choice:" .. s.key]) end

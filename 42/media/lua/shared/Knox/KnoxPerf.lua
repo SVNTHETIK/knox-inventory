@@ -222,6 +222,9 @@ P.METHODS = {
     {"KnoxTVWindow", "prerender"}, {"KnoxRadioWindow", "prerender"}, {"KnoxFluidWindow", "prerender"},
     {"KnoxFluidInfo", "prerender"}, {"KnoxStoveWindow", "prerender"}, {"KnoxGeneratorWindow", "prerender"},
     {"KnoxAlarmWindow", "prerender"}, {"KnoxDashboard", "prerender"},
+    -- the new Health tab (2026-11-10): its frame, its rebuild from the game, the mini-game's step
+    {"KnoxHealthPanel", "prerender"}, {"KnoxHealthPanel", "render"}, {"KnoxHealthPanel", "refresh"},
+    {"KnoxHealthGames", "tick"},
     -- (not ISButton / ISScrollBar / ISToolTip: Knox draws only its own of those and hands
     -- every other one to the game - their time would be the game's)
     {"ISHotbar", "render"}, {"ISToolTipInv", "render"}, {"ISContextMenu", "prerender"}, {"ISContextMenu", "render"},
@@ -252,7 +255,8 @@ P.METHODS = {
     {"KnoxOrder", "drawEye"}, {"KnoxTooltip", "want"}, {"KnoxSlotPicker", "isOpenFor"},
 }
 -- the Java part's calls Lua makes often (looked up by name when called: a wrapper in _G is seen)
-P.JAVA = {"knoxMusicForeign", "knoxMusicMuteGame", "knoxMenuSnapshot", "knoxMenuSaveBag", "knoxDrawTiles"}
+P.JAVA = {"knoxMusicForeign", "knoxMusicMuteGame", "knoxMenuSnapshot", "knoxMenuSaveBag", "knoxDrawTiles",
+    "knoxWoundScene", "knoxWoundEcg", "knoxWoundGameTick", "knoxWoundTexts"}
 -- the game's functions Knox calls every frame or every few (the surroundings' search
 -- for containers; the icon of an item in a slot)
 P.GAME = {{"ISInventoryPage", "refreshBackpacks"}, {"ISInventoryItem", "renderItemIcon"}}

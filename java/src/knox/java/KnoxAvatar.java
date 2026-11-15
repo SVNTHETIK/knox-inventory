@@ -64,7 +64,9 @@ public class KnoxAvatar {
     @LuaMethod(name = "knoxAvatarMirror", global = true)
     public static boolean knoxAvatarMirror(UI3DModel ui, IsoGameCharacter chr, boolean on) {
         AnimatedModel model = ui == null ? null : modelOf(ui);
-        if (model == null || !model.hasAnimationPlayer()) return false;
+        // (the author's game 2026-11-11: the Health tab's first frame - the model's visual not set
+        // yet, getAnimationPlayer threw a NullPointerException into the error window)
+        if (model == null || model.getVisual() == null || !model.hasAnimationPlayer()) return false;
         AnimationPlayer own = model.getAnimationPlayer();
         AnimationPlayer src = (on && chr != null) ? chr.getAnimationPlayer() : null;
         // same skeleton only: the copy walks both bone arrays

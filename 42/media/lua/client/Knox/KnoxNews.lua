@@ -287,7 +287,8 @@ end
 
 -- (what only the main menu's reader has: its head, Boosty, the live inventory and menu on R
 -- need the whole screen and no world - the list in the game goes without them)
-local MENU_ONLY = {pinstyle = true, boosty = true, inv = true, rmenu = true, menu = true, back = true, lead = true}
+local MENU_ONLY = {pinstyle = true, boosty = true, inv = true, rmenu = true, menu = true, back = true, lead = true,
+                   free = true, parts = true}   -- (update 12's live grids: the main menu only)
 
 --- A post's body as blocks for one text width: paragraphs, headings, list
 --- items (marker color), pictures.

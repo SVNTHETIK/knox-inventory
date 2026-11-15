@@ -842,6 +842,57 @@ run("keys: a Viewpoint without the place key", function()
     Viewpoint = nil
 end)
 
+-- the car's key on hand (the author 2026-11-13, variant C): under the car's own name, not on its trunk
+run("car key on hand", function()
+    local car = {classes = {BaseVehicle = true}}
+    local VI0, KD0, onEnter0 = ViewpointInteract, KnoxDashboard, ISVehicleMenu.onEnter
+    ISVehicleMenu.onEnter = function() end
+    local has = false
+    KnoxDashboard = {carriedKey = function(p, v) return (has and v == car) and {} or nil end}
+    ViewpointInteract = {actions = {{fn = ISVehicleMenu.onEnter, args = {PLAYER, car, 0}}, {fn = ISVehicleMenu.onOpenDoor}}}
+    VP.obj, VP.loot, VP.locked, VP.containers = {}, false, false, jlist({})
+    VP.actions = {{label = "Enter Vehicle", on = true}, {label = "Open Door", on = true}}
+    VP.version = (VP.version or 0) + 1
+    frames(30)
+    check("no key: no line", P.car == car and not P.keyHere and P.sub == nil, tostring(P.sub))
+    has = true
+    frames(10, 50)
+    check("key picked up: the line comes", P.keyHere == true and P.sub == getText("IGUI_Knox_VPKeyHere"), tostring(P.sub))
+    has = false
+    frames(10, 50)
+    check("key gone: the line goes", not P.keyHere and P.sub == nil, tostring(P.sub))
+    has = true
+    -- (the car's panel at its trunk: the car itself is the object, no "Enter Vehicle" -
+    -- the author's bench 2026-11-13: the key showed there)
+    ViewpointInteract = {actions = {{fn = ISVehicleMenu.onOpenDoor, args = {PLAYER, {}}}}}
+    VP.obj, VP.actions = car, {{label = "Open Trunk", on = true}}
+    VP.version = VP.version + 1
+    frames(30)
+    check("the car's panel at the trunk: no key line", not P.keyHere and P.car == nil and P.sub == nil, tostring(P.sub))
+    VP.obj, VP.loot, VP.containers = {}, true, jlist({container({}, "trunk")})
+    VP.version = VP.version + 1
+    frames(30)
+    check("the trunk: no key line", not P.keyHere and P.car == nil, tostring(P.sub))
+    check("the trunk: its empty row", rowsOf("empty") == 1, rowsOf("empty"))
+    ViewpointInteract, KnoxDashboard, ISVehicleMenu.onEnter = VI0, KD0, onEnter0
+end)
+
+-- the panel's size in the settings (the author 2026-11-13): its sizes and Knox's fonts at that size
+run("panel size", function()
+    VP.shown, VP.kind, VP.obj, VP.loot, VP.locked, VP.containers = true, 3, {}, true, false, jlist({cup})
+    VP.version = (VP.version or 0) + 1
+    frames(30)
+    local w0 = P.w
+    check("100%: Knox's own fonts", P.Z.fText == KnoxTheme.fontText and P.Z.fTile == KnoxTheme.fontTile)
+    LOOKS["vp.scale"] = 150
+    frames(30)
+    check("150%: wider", P.w >= w0 * 1.4, tostring(w0) .. " -> " .. tostring(P.w))
+    check("150%: its own fonts", P.Z.fText ~= KnoxTheme.fontText and P.Z.fText.key == "body" .. (48 * 1.5 * 0.31), P.Z.fText.key)
+    LOOKS["vp.scale"] = nil
+    frames(30)
+    check("back to 100%", math.abs(P.w - w0) < 1 and P.Z.fText == KnoxTheme.fontText, P.w)
+end)
+
 run("all along: no clip left on", function()
     check("left", STENCIL.left == 0, STENCIL.left)
     check("bad", STENCIL.bad == 0, STENCIL.bad)

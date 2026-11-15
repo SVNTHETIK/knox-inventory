@@ -169,4 +169,16 @@ do
     check("lists on: written", frame() > 0 and J.begun == 1)
 end
 
+do
+    -- a mod's own location named after the game's (Spongie Open Jackets, the author 2026-11-13)
+    local E = KnoxEquip
+    local function slotOf(loc) local m = E.locOf(E.norm(loc)) return m and m.slot end
+    check("location: game's own", slotOf("base:Jacket") == "torso")
+    check("location: open jacket -> torso", slotOf("SpnOpenCloth:JACKET_OPEN") == "torso")
+    check("location: rolled jacket -> torso", slotOf("SpnOpenCloth:JACKET_OPENROLL") == "torso")
+    check("location: longest name wins", (E.locOf("jacketbulkyopen") or {}).order == E.LOC.jacketbulky.order)
+    check("location: unknown -> accessory", slotOf("SomeMod:Wings") == nil)
+    check("location: short names not guessed", slotOf("hatpin") == nil or E.LOC.hat == nil)
+end
+
 print("slot: " .. pass .. " pass, " .. fail .. " fail")

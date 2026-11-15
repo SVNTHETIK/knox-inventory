@@ -120,7 +120,17 @@ public class KnoxModels {
     /** Version of the Java part, for the Lua side to check it is loaded. */
     @LuaMethod(name = "knoxJavaVersion", global = true)
     public static String knoxJavaVersion() {
-        return "153";   // 153: knoxBarCannot - no winter bar and no menu swipe on a Mac (the game's OpenGL 2.1 there) or without OpenGL 3.3: a Mac player's crashes (the author 2026-11-10)
+        return "165";   // 165: knoxHatchStripes - stripes of a given period and width (the free grid's zone, the author 2026-11-15)
+                        // 164: KnoxUiBetween (161-163) taken out - the author 2026-11-15: the game ran slower with it; its code kept in .claude/perf/uiframes
+                        // 163: KnoxUiBetween - one UI frame for each frame shown, made as soon as a frame goes to the screen (not on a clock of its own), kept until the step's own frame is on the screen, with the idle state's index (the author 2026-11-14: fresh in every frame, "no 'almost'")
+                        // 162: KnoxUiBetween's counters (console.txt every 5 s on the author's computer, knoxUiBetweenState)
+                        // 161: KnoxUiBetween - the UI every frame under Viewpoint's fixed tick (0.1.7-rc3+: the UI was drawn 30 a second at 120 FPS; the author 2026-11-14)
+                        // 160: KnoxIconFx - a broken thing's grey picture: no dark edge, no stray dashes on its rim (the author 2026-11-14)
+                        // 158: KnoxTiles - the category's glow (knoxTileFill, a part of a texture in the ready lists), a stack's picture up over its count's plate (the author 2026-11-13)
+                        // 157: KnoxCarKey - a key works from any bag on the character and goes back there out of the ignition (the author 2026-11-13, bench ign_bag)
+                        // 156: the undo games (stitches out, a splint off) and the pictures' plain RGBA texture; 155: knoxWoundDebug - where the health tab's pictures stop (the author's game 2026-11-11: words came, pictures did not)
+                        // 154: the health tab as its mockup health_v3 (the author 2026-11-10): the wound pictures and mini-games drawn in Java (KnoxWoundArt, KnoxWoundGame, KnoxWoundCanvas), the body's light styles (KnoxHealthPaint: a bleeding's beat, an infection's noise, a fracture's scan, glass glints, healing breathing, blood running down, the rest dimmed), fonts past 44 px (KnoxFonts, scaled), knoxActionMaxTime
+                        // 153: knoxBarCannot - no winter bar and no menu swipe on a Mac (the game's OpenGL 2.1 there) or without OpenGL 3.3: a Mac player's crashes (the author 2026-11-10)
                         // 152: the DEV reloader - knoxHot* (KnoxHot, KnoxHotEngine, KnoxHotJava): Lua files run again, the texts read again, classes swapped in a game that is going; only where knox_dev.txt is (the author 2026-11-10)
                         // 151: knoxUiPartAlpha - one window's own alpha (the hotbar's transparency); knoxContextDoneAt - the interact key did something (the hidden hotbar, the author 2026-11-10)
                         // 150: the game mode asked by name - 42.22 made getGameMode() return a GameMode, and the menu snapshot stopped being written (NoSuchMethodError); knoxGameMode for Lua's tutorial check (the author's console 2026-11-09)

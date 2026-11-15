@@ -2,6 +2,7 @@ package knox.java;
 
 import se.krka.kahlua.integration.annotations.LuaMethod;
 import se.krka.kahlua.vm.KahluaTable;
+import zombie.core.textures.Texture;
 import zombie.inventory.InventoryItem;
 import zombie.ui.UIElement;
 
@@ -44,18 +45,78 @@ public class KnoxTiles {
         ui.DrawTextureScaledCol(null, x, y, w, h, num(c, "r", 0), num(c, "g", 0), num(c, "b", 0), a);
     }
 
+    // The category's glow (stack_count.html G3++, the author 2026-11-13): the colour lit
+    // behind the thing and deeper towards the edges, its hue kept - the plate in the
+    // category's deep shade (`lo`), this white spot tinted with its rich one (`hi`) over it:
+    // alpha 1 a little above the middle down to 0 at 0.7 of the tile, as the mockup's
+    // radial gradient. (KnoxTheme makes lo and hi for each T.category colour.)
+    static Texture glowTex;
+
+    static Texture glow() {
+        if (glowTex == null) glowTex = Texture.getSharedTexture("media/ui/knox_tile_glow.png");
+        return glowTex;
+    }
+
     /**
      * A tile's background: its colour filled up to its level inside the 2 px frame, no
-     * level as full (KnoxTheme.tileFill, condition_v3, the author, 2026-10-31).
+     * level as full (KnoxTheme.tileFill, condition_v3, the author, 2026-10-31); the colour
+     * glows (the author 2026-11-13) - the glow is the whole tile's, a fill lower than
+     * full shows its part of it.
      */
+    static void fill(UIElement ui, double x, double y, double w, double h, double level, KahluaTable cat,
+                     KahluaTable cell, double a) {
+        rect(ui, x, y, w, h, cell, a);
+        boolean filled = level > 0 && cat != null;
+        double fh = filled ? Math.max(4, Math.floor((h - 6) * Math.min(1, level) + 0.5)) : 0;
+        double fy = y + h - 3 - fh, fhh = fh + 1;
+        // the empty part above the level (all of it at zero) glows in the cell's grey
+        // (empty_glow.html E2, the author 2026-11-14)
+        KahluaTable lo = tab(cell, "lo"), hi = tab(cell, "hi");
+        double iy = y + 2, ih = h - 4, eh = (filled ? fy : y + h - 2) - iy;
+        if (lo != null && hi != null && ih > 0 && eh > 0) {
+            Texture g = glow();
+            rect(ui, x + 2, iy, w - 4, eh, lo, a);
+            if (g != null) {
+                double subH = eh / ih * g.getHeight();
+                ui.DrawSubTextureRGBA(g, 0, 0, g.getWidth(), subH, x + 2, iy, w - 4, eh,
+                    num(hi, "r", 0), num(hi, "g", 0), num(hi, "b", 0), a);
+                KnoxDrawList.addSub(ui, g, hi, 0, subH, x + 2, iy, w - 4, eh, a);
+            }
+        }
+        if (!filled) return;
+        lo = tab(cat, "lo");
+        hi = tab(cat, "hi");
+        Texture g = lo != null && hi != null ? glow() : null;
+        if (g == null) {
+            rect(ui, x + 2, fy, w - 4, fhh, cat, a);
+            return;
+        }
+        rect(ui, x + 2, fy, w - 4, fhh, lo, a);
+        double th = g.getHeight();
+        if (ih <= 0) return;
+        double subY = (fy - iy) / ih * th, subH = fhh / ih * th;
+        ui.DrawSubTextureRGBA(g, 0, subY, g.getWidth(), subH, x + 2, fy, w - 4, fhh,
+            num(hi, "r", 0), num(hi, "g", 0), num(hi, "b", 0), a);
+        // (not one of the draws the ready lists catch by themselves: written down here)
+        KnoxDrawList.addSub(ui, g, hi, subY, subH, x + 2, fy, w - 4, fhh, a);
+    }
+
     static void fill(UIElement ui, KahluaTable pal, double x, double y, double w, double h, KahluaTable d) {
-        KahluaTable cat = tab(d, "cat");
         Object o = d.rawget("level");
-        rect(ui, x, y, w, h, tab(pal, "cell"), 1);
-        double level = o instanceof Double ? (Double) o : 1;
-        if (level <= 0) return;
-        double fh = Math.max(4, Math.floor((h - 6) * Math.min(1, level) + 0.5));
-        rect(ui, x + 2, y + h - 3 - fh, w - 4, fh + 1, cat, 1);
+        fill(ui, x, y, w, h, o instanceof Double ? (Double) o : 1, tab(d, "cat"), tab(pal, "cell"), 1);
+    }
+
+    /** KnoxTheme T.tileFill: the same background for any tile Lua draws (a level, not unknown). */
+    @LuaMethod(name = "knoxTileFill", global = true)
+    public static void knoxTileFill(UIElement ui, double x, double y, double w, double h, double level,
+                                    KahluaTable cat, double a, KahluaTable cell) {
+        if (ui == null) return;
+        fill(ui, x, y, w, h, level, cat, cell, a);
+    }
+
+    /** How far up a thing's picture goes on a tile with a count's plate (stack_count.html R2: 3 px at 48). */
+    static double lift(double cs) {
+        return Math.max(2, Math.floor(cs * 3 / 48 + 0.5));
     }
 
     /**
@@ -110,7 +171,10 @@ public class KnoxTiles {
                 // the icon
                 if (yes(d, "hasTex")) {
                     double side = Math.floor(Math.min(pw, ph) * 0.85);
-                    ui.DrawItemIcon(item, x + Math.floor((pw - side) / 2), y + Math.floor((ph - side) / 2), 1.0, side, side);
+                    // (a stack: its count's plate in the corner, the picture a little up - the author 2026-11-13)
+                    KahluaTable items = tab(e, "items");
+                    double up = items != null && items.len() > 1 ? lift(cs) : 0;
+                    ui.DrawItemIcon(item, x + Math.floor((pw - side) / 2), y + Math.floor((ph - side) / 2) - up, 1.0, side, side);
                 }
                 // read / watched: the top right corner folded down
                 if (yes(d, "done")) {

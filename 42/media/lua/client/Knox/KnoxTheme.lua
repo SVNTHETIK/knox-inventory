@@ -18,7 +18,7 @@ T.MOD_ID = KnoxModId or "KnoxInventory"
 -- the game is replaced - the player gets the game's own UI and a message.
 -- (raised with every change of the jar: Lua of one release with the jar of
 -- another, both "22", failed on calls the older jar lacked - 0.9.5, 14.10.2026)
-T.JAVA_NEEDED = 153
+T.JAVA_NEEDED = 165
 T.javaVersion = knoxJavaVersion and tonumber(knoxJavaVersion()) or nil
 T.active = T.javaVersion ~= nil and T.javaVersion >= T.JAVA_NEEDED
 
@@ -173,6 +173,10 @@ T.LOOK = {
     -- happening before it hides (with "hotbar.hide" on; KnoxHotbar - the author, 2026-11-10)
     {key = "hotbar.alpha", min = 20, max = 100, step = 5, default = 100, unit = "%"},
     {key = "hotbar.hideTime", min = 1, max = 30, step = 1, default = 5, unit = ""},
+    -- vp.scale  the size of Knox's crosshair panel, Viewpoint's Loot Menu (KnoxCrosshair sizes:
+    --           its rows, pictures, keys and letters; the author, 2026-11-13) - listed only with
+    --           Viewpoint's panel here; new: marked so in the settings
+    {key = "vp.scale", min = 60, max = 160, step = 10, default = 100, unit = "%", page = "game", new = true, only = "viewpoint"},
 }
 
 -- (by key: T.look is asked many times a frame - every grid, panel and slot's alpha)
@@ -243,26 +247,33 @@ T.SWITCHES = {
     -- barHigh  the winter bar in the menu at its best: the shafts of light in the air, the
     --          motes, the AO, soft shadows, smooth edges (KnoxBarFrame; the author, 2026-10-31)
     {key = "barHigh", default = true, page = "menu"},
-    {key = "search", default = false, new = true, page = "game"},   -- (new: marked so in the settings)
+    {key = "search", default = false, page = "game"},
     -- scatter  things found in furniture, cars and bodies lie at random places, not
     --          packed in rows (KnoxGrid.build; the author, 2026-10-19)
-    {key = "scatter", default = true, new = true, page = "game"},
+    {key = "scatter", default = true, page = "game"},
     -- home  a thing the game takes out of a bag (into a hand, to eat, wear, hang on the belt)
     --       goes back to its place when let go; while in a hand or in use its place waits
     --       for it, a grey silhouette in it (KnoxHome; the author, 2026-11-07)
-    {key = "home", default = true, new = true, page = "game"},
+    {key = "home", default = true, page = "game"},
+    -- grid.free  no limit of cells: every grid one plain grid that grows down with the things,
+    --            only the game's weight limits (KnoxGrid.free; the author, 2026-11-15)
+    {key = "grid.free", default = false, page = "game"},
     -- musicShare  one's own music in the car heard by the players near it, in a game
     --             with others (KnoxMusicNet: only its hash, size and kind go out)
     -- musicHear   the others' own music heard here (and fetched when not here)
-    {key = "musicShare", default = true, new = true, page = "game"},
-    {key = "musicHear", default = true, new = true, page = "game"},
+    {key = "musicShare", default = true, page = "game"},
+    {key = "musicHear", default = true, page = "game"},
     -- vp.panel  Knox's own crosshair panel in place of Viewpoint's (KnoxCrosshair;
     --           the author, 2026-10-25) - listed only with Viewpoint here
-    {key = "vp.panel", default = true, new = true, page = "game", only = "viewpoint"},
+    {key = "vp.panel", default = true, page = "game", only = "viewpoint"},
     -- hotbar.hide  the hotbar outside the inventory hides while nothing happens to it and comes
     --              up when the things in hand change, the mouse comes to its place, the interact
     --              key is pressed for nothing (KnoxHotbar; the author, 2026-11-10)
-    {key = "hotbar.hide", default = false, new = true},
+    {key = "hotbar.hide", default = false},
+    -- health.games  every treatment of the Health tab a mini-game on the wound, played well
+    --               done sooner (KnoxHealthGames; the author, 2026-11-10) - listed only with
+    --               the health module on
+    {key = "health.games", default = true, page = "game", only = "health"},
 }
 
 -- Choices of the inventory in the settings: one of a few values, shown as a row
@@ -282,7 +293,7 @@ T.SWITCHES = {
 --               the bag's layout (else next to its category), next to its
 --               category, or the first free cell as before 0.9.8
 T.CHOICES = {
-    {key = "loot.scope", values = {"auto", "opened", "all"}, default = "all", new = true, page = "game"},
+    {key = "loot.scope", values = {"auto", "opened", "all"}, default = "all", page = "game"},
     {key = "order.rule", values = {"zones", "dense", "name", "weight"}, default = "zones", page = "order"},
     {key = "order.auto", values = {"layout", "zones", "off"}, default = "layout", page = "order"},
 }
@@ -459,6 +470,7 @@ function T.applySkin()
     local lum = 0.2126 * a.r + 0.7152 * a.g + 0.0722 * a.b
     local ink = lum > 0.45 and (over.ink and hex(over.ink) or BASE.ink) or BASE.bright
     T.color.ink.r, T.color.ink.g, T.color.ink.b = ink.r, ink.g, ink.b
+    if T.cellGlow then T.cellGlow() end
     if knoxSetPalette then pcall(knoxSetPalette, T.color) end
     -- the mouse cursor in the skin's main colour (the Java part repaints the arrow)
     if knoxCursorTint then pcall(knoxCursorTint, a.r, a.g, a.b, id) end
@@ -475,6 +487,60 @@ T.category = {
     mat  = hex("#443123"),
     misc = hex("#232726"),
 }
+
+-- The category's glow (stack_count.html G3++, the author 2026-11-13: "очень нравится g3++"): the
+-- colour lit behind the thing, deeper towards the edges, its hue kept (not lighter, not into
+-- another colour - both turned down). Each colour gets `hi` (the middle: richer and brighter)
+-- and `lo` (the edge: a little richer, darker); KnoxTiles.java draws lo with a white spot
+-- tinted hi over it. Saturation and darkening as the author turned them down: x1.95 / x1.55
+-- light in the middle, x1.1 / x0.7 at the edge.
+local function hslOf(c)
+    local r, g, b = c.r, c.g, c.b
+    local mx, mn = math.max(r, g, b), math.min(r, g, b)
+    local l = (mx + mn) / 2
+    if mx == mn then return 0, 0, l end
+    local d = mx - mn
+    local s = l > 0.5 and d / (2 - mx - mn) or d / (mx + mn)
+    local h
+    if mx == r then h = (g - b) / d + (g < b and 6 or 0)
+    elseif mx == g then h = (b - r) / d + 2
+    else h = (r - g) / d + 4 end
+    return h * 60, s, l
+end
+
+local function fromHsl(h, s, l)
+    h = h % 360
+    local c = (1 - math.abs(2 * l - 1)) * s
+    local x = c * (1 - math.abs((h / 60) % 2 - 1))
+    local m = l - c / 2
+    local r, g, b
+    if h < 60 then r, g, b = c, x, 0
+    elseif h < 120 then r, g, b = x, c, 0
+    elseif h < 180 then r, g, b = 0, c, x
+    elseif h < 240 then r, g, b = 0, x, c
+    elseif h < 300 then r, g, b = x, 0, c
+    else r, g, b = c, 0, x end
+    -- (as the mockup: each channel to a whole 0..255 step)
+    local function q(v) return math.floor((v + m) * 255 + 0.5) / 255 end
+    return {r = q(r), g = q(g), b = q(b)}
+end
+
+for _, c in pairs(T.category) do
+    local h, s, l = hslOf(c)
+    c.hi = fromHsl(h, math.min(1, s * 1.95), math.min(0.5, l * 1.55))
+    c.lo = fromHsl(h, math.min(1, s * 1.1), l * 0.7)
+end
+
+-- A tile's empty part (a thing at zero, or above its level) glows too, in the skin's cell
+-- grey (empty_glow.html E2, the author 2026-11-14): the cell lighter in the middle (light
+-- x3.6), a little darker at the edge (x0.8). KnoxTiles.java draws it as the category's glow.
+function T.cellGlow()
+    local c = T.color.cell
+    local h, s, l = hslOf(c)
+    c.hi = fromHsl(h, s, math.min(0.5, l * 3.6))
+    c.lo = fromHsl(h, s, l * 0.8)
+end
+T.cellGlow()
 
 local CATEGORY_BY_DISPLAY = {
     Ammo = "ammo", WeaponPart = "ammo",
@@ -532,6 +598,13 @@ local function knoxFont(style, size)
 end
 T.makeFont = knoxFont   -- only valid when T.javaFonts
 
+--- A Knox font past the biggest atlas (44 px): the atlas drawn scaled up by Java (KnoxFonts,
+--- jar 154) - the health tab's big number, 78 px in its mockup (the author, 2026-11-10).
+function T.makeBigFont(style, size)
+    size = math.max(10, math.min(120, math.floor(size + 0.5)))
+    return {knox = true, style = style, size = size, key = style .. "_" .. size}
+end
+
 --- Biggest game font (with Cyrillic) not taller than `limit`, for the fallback.
 local function gameFontUpTo(limit)
     local tm = getTextManager()
@@ -588,7 +661,12 @@ function T.refresh()
         T.fontText = knoxFont("body", c * 0.31)      -- body text, values
         T.fontCaps = knoxFont("head", c * 0.29)      -- section titles, buttons, labels
         T.fontTile = knoxFont("head", c * 0.25)      -- tile names, small labels
+        -- a stack's count, a magazine's rounds (stack_count.html R2, the author 2026-11-13):
+        -- bold 12 px at 1080p, its "/ what it holds" smaller
+        T.fontCount = knoxFont("title", c * 0.25)
+        T.fontCountSmall = knoxFont("head", c * 0.21)
     else
+        T.fontCount, T.fontCountSmall = nil, nil
         T.fontHeader = UIFont.Medium
         T.fontTab = UIFont.Medium
         T.fontText = UIFont.Small
@@ -884,21 +962,26 @@ function T.iconButton(ui, r, glyph, hot, opts)
     T.border(ui, r[1], r[2], r[3], r[4], on and T.color.accent or T.color.tileEdge)
     local c = off and T.color.dim or (on and T.color.accent or T.color.text)
     local cs = math.max(2, math.floor(r[3] / 5))
-    local cx, cy = r[1] + math.floor(r[3] / 2), r[2] + math.floor(r[4] / 2)
-    local h = math.floor(cs / 2)
+    -- the chevron's whole block (2 px squares: 2cs + 2 across, cs + 2 deep) in the middle of the
+    -- button - set by its middle pixel, the squares growing right and down, it stood 1 px right
+    -- and 1.5 px low (the critic 2026-11-15, the author: "поправить")
+    local long, deep = cs * 2 + 2, cs + 2
+    local across = glyph == "down" or glyph == "up"
+    local x0 = r[1] + math.floor((r[3] - (across and long or deep)) / 2)
+    local y0 = r[2] + math.floor((r[4] - (across and deep or long)) / 2)
     for i = 0, cs do
         if glyph == "down" then
-            ui:drawRect(cx - cs + i, cy - h + i, 2, 2, 1, c.r, c.g, c.b)
-            ui:drawRect(cx + cs - i, cy - h + i, 2, 2, 1, c.r, c.g, c.b)
+            ui:drawRect(x0 + i, y0 + i, 2, 2, 1, c.r, c.g, c.b)
+            ui:drawRect(x0 + cs * 2 - i, y0 + i, 2, 2, 1, c.r, c.g, c.b)
         elseif glyph == "up" then
-            ui:drawRect(cx - cs + i, cy + h - i, 2, 2, 1, c.r, c.g, c.b)
-            ui:drawRect(cx + cs - i, cy + h - i, 2, 2, 1, c.r, c.g, c.b)
+            ui:drawRect(x0 + i, y0 + cs - i, 2, 2, 1, c.r, c.g, c.b)
+            ui:drawRect(x0 + cs * 2 - i, y0 + cs - i, 2, 2, 1, c.r, c.g, c.b)
         elseif glyph == "right" then
-            ui:drawRect(cx - h + i, cy - cs + i, 2, 2, 1, c.r, c.g, c.b)
-            ui:drawRect(cx - h + i, cy + cs - i, 2, 2, 1, c.r, c.g, c.b)
+            ui:drawRect(x0 + i, y0 + i, 2, 2, 1, c.r, c.g, c.b)
+            ui:drawRect(x0 + i, y0 + cs * 2 - i, 2, 2, 1, c.r, c.g, c.b)
         else   -- left
-            ui:drawRect(cx + h - i, cy - cs + i, 2, 2, 1, c.r, c.g, c.b)
-            ui:drawRect(cx + h - i, cy + cs - i, 2, 2, 1, c.r, c.g, c.b)
+            ui:drawRect(x0 + cs - i, y0 + i, 2, 2, 1, c.r, c.g, c.b)
+            ui:drawRect(x0 + cs - i, y0 + cs * 2 - i, 2, 2, 1, c.r, c.g, c.b)
         end
     end
 end
@@ -1436,8 +1519,9 @@ end
 --- A key in a small frame ("[R]") followed by its label, for hint rows;
 --- returns the x after it.
 -- (`a`: how much it shows - the crosshair panel's hints fade as they change, KnoxCrosshair)
-function T.keyHint(ui, x, y, key, label, h, a)
-    local font = T.fontTile
+-- (`keyFont`, `textFont`: the crosshair panel's own, at its size - the author 2026-11-13)
+function T.keyHint(ui, x, y, key, label, h, a, keyFont, textFont)
+    local font = keyFont or T.fontTile
     local kw = T.keyW(key, font)
     local kh = h or (T.fontH(font) + 4)
     hintPlate[1], hintPlate[2], hintPlate[3], hintPlate[4] = x, y, kw, kh
@@ -1445,7 +1529,7 @@ function T.keyHint(ui, x, y, key, label, h, a)
     T.plate(ui, hintPlate, key, hintPlateOpts)
     x = x + kw + 6
     hintBand[1], hintBand[2], hintBand[3], hintBand[4] = x, y, 0, kh
-    hintBandOpts.font, hintBandOpts.a = T.fontText, a
+    hintBandOpts.font, hintBandOpts.a = textFont or T.fontText, a
     return x + T.label(ui, label, hintBand, T.color.dim, hintBandOpts)
 end
 
@@ -1472,6 +1556,63 @@ function T.outlinedRight(ui, text, x, y, color, font, a)
         T.drawText(ui, text, lx + o[1], y + o[2], 0, 0, 0, 0.9 * a, font)
     end
     T.drawText(ui, text, lx, y, color.r, color.g, color.b, a, font)
+end
+
+-- A stack's count, a magazine's rounds (stack_count.html R2, the author 2026-11-13: the bare
+-- digits looked "naked"): a small plate in the tile's bottom right corner, its top and left edge
+-- the tile's own 2 px frame going on (same colour, not laid over it), the digits bold without
+-- a shadow (the author), a magazine's "/ what it holds" smaller and dim. Each part stands by its
+-- own pixels - the same margins for 5, 124, 13/15, the "/" in the middle of the height (by the
+-- font's widths they wandered 1-2 px: the critic, the author 2026-11-13 "не отцентровано").
+-- The picture of a thing with a count goes up a little (T.countLift).
+T.COUNT_PLATE = hex("#2b2f2e")
+
+--- How far up the picture of a thing with a count goes (KnoxTiles.lift: 3 px at 48).
+function T.countLift(cs)
+    return math.max(2, math.floor((cs or T.cell) * 3 / 48 + 0.5))
+end
+
+--- The plate with `n` (and "/cap" when given) in the corner of the tile x, y, w, h; `c` the
+--- number's colour, `frameC` the tile frame's (T.color.tileFrame).
+function T.tileCount(ui, x, y, w, h, n, cap, c, frameC, a)
+    a = a or 1
+    local fb = T.fontCount or T.fontTile
+    local fs = T.fontCountSmall or T.fontTile
+    local k = T.cell / 48
+    local ft = 2
+    local padX = math.max(2, math.floor(3 * k + 0.5))
+    local padY = math.max(1, math.floor(2 * k + 0.5))
+    local gap = math.max(1, math.floor(2 * k + 0.5))
+    local _, dt, _, db = inkBox(fb, "0123456789")
+    local l1, t1, r1, b1 = inkBox(fb, n)
+    local iw = r1 - l1
+    local l2, t2, r2, b2, l3, t3, r3, b3
+    if cap then
+        l2, t2, r2, b2 = inkBox(fs, "/")
+        l3, t3, r3, b3 = inkBox(fs, cap)
+        iw = iw + gap + (r2 - l2) + gap + (r3 - l3)
+    end
+    local pw, ph = ft + padX + iw + padX + ft, ft + padY + (db - dt) + padY + ft
+    local px, py = x + w - pw, y + h - ph
+    local p = T.COUNT_PLATE
+    frameC = frameC or T.color.tileFrame
+    local fr, fg, fbl = frameC.r, frameC.g, frameC.b
+    ui:drawRect(px, py, pw, ph, a, p.r, p.g, p.b)
+    ui:drawRect(px, py, pw, ft, a, fr, fg, fbl)                 -- its top edge
+    ui:drawRect(px, py + ft, ft, ph - ft, a, fr, fg, fbl)       -- its left edge
+    ui:drawRect(x + w - ft, py, ft, ph, a, fr, fg, fbl)         -- the tile's own frame under it, whole
+    ui:drawRect(px, y + h - ft, pw, ft, a, fr, fg, fbl)
+    -- each part: left to right by its pixels, in the middle of the plate's height
+    local iy, ih = py + ft, ph - 2 * ft
+    local cur = px + ft + padX
+    T.drawText(ui, n, cur - l1, iy + math.floor((ih - (b1 - t1)) / 2 + 0.5) - t1, c.r, c.g, c.b, a, fb)
+    if cap then
+        local d = T.color.dim
+        cur = cur + (r1 - l1) + gap
+        T.drawText(ui, "/", cur - l2, iy + math.floor((ih - (b2 - t2)) / 2 + 0.5) - t2, d.r, d.g, d.b, a, fs)
+        cur = cur + (r2 - l2) + gap
+        T.drawText(ui, cap, cur - l3, iy + math.floor((ih - (b3 - t3)) / 2 + 0.5) - t3, d.r, d.g, d.b, a, fs)
+    end
 end
 
 --- The same, left-aligned at x: a hotbar's key number over the fill of its tile
@@ -1551,6 +1692,15 @@ end
 
 --- The same for a slot drawn every frame: what it is read from asked of the item once,
 --- kept in `memo` (one table per slot).
+--- A dragged thing's tile (a copy at the mouse): its colour's glow and its state, as its tile
+--- in a bag (the author 2026-11-14: the copy was a flat colour, no state). `d`: the grid
+--- tile's draw info when there is one (a stack's state, the frozen tint).
+function T.dragTile(ui, item, x, y, w, h, d, a)
+    local level = d and d.level or T.itemLevel(item, T.levelKind(item))
+    local cat = d and d.cat or T.itemColor(item, T.category[T.categoryOf(item)])
+    T.tileFill(ui, x, y, w, h, level, cat, a)
+end
+
 function T.levelOf(memo, item)
     if memo.levelFor ~= item then memo.levelFor, memo.levelFrom = item, T.levelKind(item) end
     return T.itemLevel(item, memo.levelFrom)
@@ -1581,13 +1731,56 @@ function T.tileHatch(ui, x, y, w, h, color, a)
     end
 end
 
+--- A plate in a category's colour with its glow (the tooltip's and the item menu's header -
+--- the author 2026-11-14: "шапки в подсказке тоже должны иметь такой же градиент"): the deep
+--- shade over x, y, w, h, the glow over its inside `inset` px in (inside its frame). A colour
+--- without a glow: flat.
+local glowTex
+local glowMade = {}
+--- `c` with its glow's colours (`hi`, `lo` as T.category's): a category's own, else made
+--- once for it - a panel's header in the skin's colour glows the same way (the author
+--- 2026-11-14: the crosshair panel's and the R menu's headers).
+function T.glowOf(c)
+    if c.hi then return c end
+    local g = glowMade[c]
+    if not g then
+        local h, s, l = hslOf(c)
+        g = {r = c.r, g = c.g, b = c.b,
+             hi = fromHsl(h, math.min(1, s * 1.95), math.min(0.5, l * 1.55)),
+             lo = fromHsl(h, math.min(1, s * 1.1), l * 0.7)}
+        glowMade[c] = g
+    end
+    return g
+end
+
+function T.glowRect(ui, x, y, w, h, color, a, inset)
+    a = a or 1
+    color = T.glowOf(color)
+    local lo, hi = color.lo, color.hi
+    if not hi then
+        T.rect(ui, x, y, w, h, color, a)
+        return
+    end
+    T.rect(ui, x, y, w, h, lo, a)
+    glowTex = glowTex or getTexture("media/ui/knox_tile_glow.png")
+    inset = inset or 0
+    if glowTex and w > inset * 2 and h > inset * 2 then
+        ui:drawTextureScaled(glowTex, x + inset, y + inset, w - inset * 2, h - inset * 2, a, hi.r, hi.g, hi.b)
+    end
+end
+
 --- A tile's background: `color` filled up to `level` inside its 2 px frame, nil as full
 --- (the mockup: with no state and at 100% alike). (KnoxTiles.java draws the same for a
 --- grid's quiet tiles.)
 function T.tileFill(ui, x, y, w, h, level, color, a)
     a = a or 1
-    T.rect(ui, x, y, w, h, T.color.cell, a)
     level = level or 1
+    -- (the category's glow: drawn by the Java part, jar 158 - an older one, the flat colour)
+    if level ~= T.LEVEL_UNKNOWN and color and color.hi and knoxTileFill then
+        knoxTileFill(ui.javaObject, x, y, w, h, level, color, a, T.color.cell)
+        return
+    end
+    T.rect(ui, x, y, w, h, T.color.cell, a)
     if level == T.LEVEL_UNKNOWN then
         T.tileHatch(ui, x, y, w, h, color, a)
         return
@@ -1849,6 +2042,50 @@ function T.mixInto(out, a, b, k)
     k = math.max(0, math.min(1, k))
     out.r, out.g, out.b = a.r + (b.r - a.r) * k, a.g + (b.g - a.g) * k, a.b + (b.b - a.b) * k
     return out
+end
+
+--- A category's colour taken towards `t` by k (frozen, cooking, hot - as the old tint laid over
+--- the tile at alpha k), its glow's colours too: the tile and its header glow in the colour it
+--- shows (the author 2026-11-14: a frozen bottle had no glow, its tooltip no frost). Kept.
+local tintOf = {}
+function T.tintCat(c, t, k)
+    if not c or not t or not k or k <= 0 then return c end
+    local q = math.floor(math.min(1, k) * 40 + 0.5)
+    local byC = tintOf[c]
+    if not byC then
+        byC = {}
+        tintOf[c] = byC
+    end
+    local byT = byC[t]
+    if not byT then
+        byT = {}
+        byC[t] = byT
+    end
+    local out = byT[q]
+    if not out then
+        local kk = q / 40
+        out = T.mix(c, t, kk)
+        if c.hi then
+            -- (its glow made anew from the tinted colour, as strong as any tile's: the tint
+            -- laid over both ends of the glow flattened it - the author 2026-11-14)
+            local h, s, l = hslOf(out)
+            out.hi = fromHsl(h, math.min(1, s * 1.95), math.min(0.5, l * 1.55))
+            out.lo = fromHsl(h, math.min(1, s * 1.1), l * 0.7)
+        end
+        byT[q] = out
+    end
+    return out
+end
+
+--- A thing's category colour as its tile shows it: frozen, cooking, done, burning, hot or cold.
+--- (`c`: the category colour to start from, when the caller has it already)
+function T.itemColor(item, c)
+    c = c or T.category[T.categoryOf(item)]
+    local base = T.cookState(item)
+    if base then c = T.tintCat(c, base, 0.22) end
+    local heat, hk = T.heatState(item)
+    if heat then c = T.tintCat(c, heat, 0.6 * hk) end
+    return c
 end
 
 --- @return table|nil base (a tint under the bar), table|nil bar color, number bar 0..1

@@ -319,6 +319,8 @@ local ICON_TEXT = {
     ContextMenu_PlantainCataplasm = "poultice", ContextMenu_ComfreyCataplasm = "poultice", ContextMenu_GarlicCataplasm = "poultice",
     ContextMenu_InsertBulletsInMagazine = "magazine", ContextMenu_InsertBullets = "magazine",
     IGUI_Knox_RMenu_LoadMagazine = "magazine", IGUI_Knox_RMenu_LoadGun = "magazine",
+    -- (the game's picture of a brochure, renamed by KnoxInspectWindow - the author 2026-11-13, variant C)
+    IGUI_Knox_InspectPicture = "picture",
     ContextMenu_UnloadRounds = "magazine", ContextMenu_EjectMagazine = "magazine", ContextMenu_InsertMagazine = "magazine",
     IGUI_DeviceOptions = "device", ContextMenu_Attach = "attach",
     ContextMenu_Grab = "grab", ContextMenu_Grab_one = "grab", ContextMenu_Grab_half = "grab", ContextMenu_Grab_all = "grab",
@@ -344,6 +346,8 @@ local ICON_TEXT = {
     ContextMenu_Walk_to = "walk", ContextMenu_PickupBrokenGlass = "glass",
     -- (the author, 2026-10-25: a window's "Remove broken glass" and "Climb through" had none)
     ContextMenu_RemoveBrokenGlass = "glass", ContextMenu_Climb_through = "climb",
+    -- (the author, 2026-11-13: a window's "Remove barricade" had none - the prying of "Dismantle")
+    ContextMenu_Unbarricade = "dismantle",
     ContextMenu_Climb_over = "climb",   -- (a fence: the same way over)
     ContextMenu_Fill = "fill", ContextMenu_FillOne = "fill", ContextMenu_FillAll = "fill", ContextMenu_RefillContainer = "fill",
     ContextMenu_Rest = "rest", ContextMenu_Open_window = "window", ContextMenu_Close_window = "window",
@@ -1561,7 +1565,7 @@ end
 local function drawWorldHead(menu, r, y, w, a)
     local C = T.color
     local x0, y0, pw = r.gap, y + r.top, w - r.gap * 2
-    T.rect(menu, x0, y0, pw, r.ph, C.header, a)
+    T.glowRect(menu, x0, y0, pw, r.ph, C.header, a, 2)   -- (glowing, as the item menu's header - the author 2026-11-14)
     T.tileFrame(menu, x0, y0, pw, r.ph, C.tileFrame, a)
     local cx, cy, cell = x0 + r.m, y0 + r.m, r.cell
     T.rect(menu, cx, cy, cell, cell, C.cell, a)

@@ -21,8 +21,10 @@ $script:LW = 4.5   # line width at 64 px (about 1.5 px in the menu)
 $script:names = @()
 
 function F($v) { [float]$v }
+$script:CUT = 0   # > 0: Pen clears (a badge's cut-out), this much wider
 function Pen($w = $script:LW) {
-    $p = New-Object System.Drawing.Pen $white, (F $w)
+    if ($script:CUT -gt 0) { $p = New-Object System.Drawing.Pen ([System.Drawing.Color]::Transparent), (F ($w + $script:CUT)) }
+    else { $p = New-Object System.Drawing.Pen $white, (F $w) }
     $p.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
     $p.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
     $p.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
@@ -70,13 +72,25 @@ function Drop($g, $cx, $top, $r, $lw = $script:LW, [switch]$fill) {
     if ($fill) { $g.FillPath($brush, $p) } else { $g.DrawPath((Pen $lw), $p) }
 }
 function Magnifier($g, $cx, $cy, $r) {
+    # (in a badge's cut-out its glass is cleared too: nothing seen through it)
+    if ($script:CUT -gt 0) { $g.FillEllipse((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::Transparent)), (F ($cx - $r)), (F ($cy - $r)), (F (2 * $r)), (F (2 * $r))) }
     Circle $g $cx $cy $r
     $d = $r * 0.72
     Line $g ($cx + $d) ($cy + $d) ($cx + $d + $r * 0.75) ($cy + $d + $r * 0.75) ($script:LW + 1.5)
 }
 # the shapes in a box (x, y, size) by moving and scaling the drawing
 function Push($g, $x, $y, $s) { $st = $g.Save(); $g.TranslateTransform((F $x), (F $y)); $g.ScaleTransform((F $s), (F $s)); return $st }
+function PushK($g, $x, $y, $s) { $st = Push $g $x $y $s; $script:LW = 4.5 / $s; return $st }
+function Pop($g, $st) { $g.Restore($st); $script:LW = 4.5 }
 
+# a badge over the drawing (a tick, a cross, a magnifier - the author 2026-11-13, the critic's
+# question 6): a clear gap round it (3.5 px a side, about 1 px in the menu), then the badge
+function Badge($g, [scriptblock]$b) {
+    $g.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
+    $script:CUT = 7; & $b; $script:CUT = 0
+    $g.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceOver
+    & $b
+}
 function Icon($name, [scriptblock]$draw) {
     $bmp = New-Object System.Drawing.Bitmap $N, $N
     $g = [System.Drawing.Graphics]::FromImage($bmp)
@@ -108,7 +122,7 @@ function Hand($g, [switch]$mirror) {
     Line $g 31 30 31 9
     Line $g 38 30 38 11
     Line $g 45 33 45 17
-    Line $g 21 44 12 33
+    Line $g 20 44 12 33   # (from the palm's edge - the author 2026-11-13: it went into the palm)
     $g.Restore($st)
 }
 function Box($g, $x, $y, $w, $h) {
@@ -131,14 +145,14 @@ function Bricks($g) {
 
 Icon "eat" {
     param($g)
-    Line $g 18 8 18 20; Line $g 24 8 24 20; Line $g 30 8 30 20
-    Arc $g 24 20 6 0 180
-    Line $g 24 26 24 56
+    Line $g 16 8 16 20; Line $g 22 8 22 20; Line $g 28 8 28 20
+    Arc $g 22 20 6 0 180
+    Line $g 22 26 22 56
     $p = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $p.AddLines((Pts @(44, 8, 44, 34)))
-    $p.AddBezier((F 44), (F 34), (F 52), (F 32), (F 52), (F 14), (F 44), (F 8))
+    $p.AddLines((Pts @(42, 8, 42, 34)))
+    $p.AddBezier((F 42), (F 34), (F 50), (F 32), (F 50), (F 14), (F 42), (F 8))
     $g.DrawPath((Pen), $p)
-    Line $g 44 34 44 56
+    Line $g 42 34 42 56
 }
 Icon "drink" {
     param($g)
@@ -204,9 +218,9 @@ Icon "map" {
 }
 Icon "magazine" {
     param($g)
-    Shape $g @(22, 16, 40, 16, 46, 56, 28, 56)
-    RRect $g 27 6 10 12 4
-    Line $g 31 30 42 30 3; Line $g 32 40 44 40 3
+    Shape $g @(20, 16, 38, 16, 44, 56, 26, 56)
+    RRect $g 25 6 10 12 4
+    Line $g 29 30 40 30 3; Line $g 30 40 42 40 3
 }
 Icon "clock" {
     param($g)
@@ -238,14 +252,14 @@ Icon "hand_main" { param($g); Hand $g }
 Icon "hand_off" { param($g); Hand $g -mirror }
 Icon "hands" {
     param($g)
-    $st = Push $g -4 10 0.66; Hand $g -mirror; $g.Restore($st)
-    $st = Push $g 26 10 0.66; Hand $g; $g.Restore($st)
+    $st = Push $g -7 10 0.66; Hand $g -mirror; $g.Restore($st)
+    $st = Push $g 29 10 0.66; Hand $g; $g.Restore($st)
 }
 Icon "wear" { param($g); Shirt $g }
 Icon "unequip" {
     param($g)
-    $st = Push $g 0 10 0.8; Shirt $g; $g.Restore($st)
-    Arrow $g 44 26 58 8 9
+    $st = PushK $g 0 10 0.8; Shirt $g; Pop $g $st
+    Arrow $g 50 19 60 6 9   # (clear of the shirt - the author 2026-11-13)
 }
 Icon "attach" {
     param($g)
@@ -280,19 +294,19 @@ Icon "place" {
 }
 Icon "unpack" {
     param($g)
-    Box $g 10 32 44 24
-    Line $g 10 32 2 24; Line $g 54 32 62 24
+    Box $g 10 30 44 26
+    Line $g 10 30 4 22; Line $g 54 30 60 22
     Arrow $g 32 46 32 6 12
 }
 Icon "all" {
     param($g)
-    Lines $g @(12, 14, 30, 32, 12, 50)
-    Lines $g @(32, 14, 50, 32, 32, 50)
+    Lines $g @(13, 14, 31, 32, 13, 50)
+    Lines $g @(33, 14, 51, 32, 33, 50)
 }
 Icon "drop" {
     param($g)
     Arrow $g 32 6 32 42 12
-    Line $g 8 54 20 54; Line $g 26 54 38 54; Line $g 44 54 56 54
+    Line $g 8 54 18 54; Line $g 27 54 37 54; Line $g 46 54 56 54
 }
 
 # The world's menu (2026-10-18, the author: a sink's, the ground's options had none) ---
@@ -300,17 +314,17 @@ Icon "drop" {
 # washing: a drop with bubbles; what is washed next to a small drop
 Icon "wash" {
     param($g)
-    Drop $g 26 6 14
-    Circle $g 48 14 5; Circle $g 52 32 3.5; Circle $g 46 48 2.5
+    Drop $g 25 10 14
+    Circle $g 47 18 5; Circle $g 52 36 4.5; Circle $g 45 52 2.5
 }
 # a room's things (the author, 2026-10-18: "Rest" and a window's header had none)
 Icon "rest" {
     param($g)
     # an armchair
-    RRect $g 14 12 36 26 6
-    Lines $g @(8, 30, 8, 48, 56, 48, 56, 30)
-    Line $g 8 30 14 30; Line $g 50 30 56 30
-    Line $g 12 48 12 56; Line $g 52 48 52 56
+    RRect $g 14 10 36 26 6
+    Lines $g @(8, 28, 8, 46, 56, 46, 56, 28)
+    Line $g 8 28 14 28; Line $g 50 28 56 28
+    Line $g 12 46 12 54; Line $g 52 46 52 54
 }
 Icon "window" {
     param($g)
@@ -337,10 +351,10 @@ Icon "door" {
 }
 Icon "lock" {
     param($g)
-    Box $g 14 28 36 28
-    Arc $g 32 26 11 180 180
-    Line $g 21 26 21 28; Line $g 43 26 43 28
-    Line $g 32 38 32 46
+    Box $g 14 24.5 36 28
+    Arc $g 32 22.5 11 180 180
+    Line $g 21 22.5 21 24.5; Line $g 43 22.5 43 24.5
+    Line $g 32 34.5 32 42.5
 }
 Icon "smash" {
     param($g)
@@ -375,14 +389,14 @@ Icon "fill" {
 }
 Icon "wash_self" {
     param($g)
-    Circle $g 26 20 10
-    Arc $g 26 62 22 200 140
-    Drop $g 50 6 6 -fill
+    Circle $g 28 20 10
+    Arc $g 28 62 22 200 140
+    Drop $g 52 6 6 -fill
 }
 Icon "wash_clothes" {
     param($g)
-    $st = Push $g 0 10 0.8; Shirt $g; $g.Restore($st)
-    Drop $g 52 2 6 -fill
+    $st = PushK $g 1 10 0.8; Shirt $g; Pop $g $st
+    Drop $g 54 2 6 -fill
 }
 Icon "wash_bandages" {
     param($g)
@@ -437,16 +451,16 @@ Icon "sit" {
 }
 Icon "walk" {
     param($g)
-    Circle $g 34 9 6
-    Line $g 33 16 29 36
-    Lines $g @(29, 36, 21, 56)
-    Lines $g @(29, 36, 40, 45, 38, 56)
-    Lines $g @(32, 22, 22, 31); Lines $g @(32, 22, 44, 29)
+    Circle $g 34 11 6
+    Line $g 33 18 29 38
+    Lines $g @(29, 38, 21, 58)
+    Lines $g @(29, 38, 40, 47, 38, 58)
+    Lines $g @(32, 24, 22, 33); Lines $g @(32, 24, 44, 31)
 }
 Icon "glass" {
     param($g)
-    Shape $g @(8, 54, 20, 18, 30, 54)
-    Shape $g @(32, 56, 44, 30, 56, 56)
+    Shape $g @(6, 54, 17, 18, 27, 54)
+    Shape $g @(35, 56, 46, 30, 57, 56)
     Line $g 46 8 46 18; Line $g 41 13 51 13
 }
 # climbing through a window: its frame, and a way out of it over the sill (the author,
@@ -454,7 +468,7 @@ Icon "glass" {
 Icon "climb" {
     param($g)
     Box $g 6 10 28 44
-    Line $g 2 54 38 54
+    Line $g 4 54 38 54
     $p = New-Object System.Drawing.Drawing2D.GraphicsPath
     $p.AddBezier((F 18), (F 42), (F 26), (F 12), (F 46), (F 10), (F 56), (F 36))
     $g.DrawPath((Pen), $p)
@@ -470,16 +484,16 @@ Icon "climb" {
 
 Icon "pour" {
     param($g)
-    $st = $g.Save(); $g.TranslateTransform(26, 24); $g.RotateTransform(-35)
+    $st = $g.Save(); $g.TranslateTransform(28, 27); $g.RotateTransform(-35)
     Shape $g @(-14, -14, 14, -14, 11, 20, -11, 20)
     $g.Restore($st)
-    Drop $g 46 34 4 -fill; Drop $g 54 46 3 -fill
+    Drop $g 48 37 4 -fill; Drop $g 56 49 3 -fill
 }
 Icon "fluid_info" {
     param($g)
-    Drop $g 32 4 20
-    Dot $g 32 32 3
-    Line $g 32 40 32 52
+    Drop $g 32 3 18
+    Dot $g 32 29 3
+    Line $g 32 36 32 47
 }
 Icon "fluid_move" {
     param($g)
@@ -527,12 +541,12 @@ Icon "sort" {
 
 # a lamp's bulb taken out / put in (the author, 2026-10-22: "Remove light bulb" had none)
 function Bulb($g) {
-    Arc $g 26 26 14 150 240
-    Lines $g @(13.9, 33, 19, 43, 33, 43, 38.1, 33)
-    Line $g 20 49 32 49; Line $g 22 55 30 55
+    Arc $g 24 26 14 150 240
+    Lines $g @(11.9, 33, 17, 43, 31, 43, 36.1, 33)
+    Line $g 18 49 30 49; Line $g 20 55 28 55
 }
-Icon "bulb_out" { param($g); Bulb $g; Arrow $g 42 22 58 6 9 }
-Icon "bulb_in" { param($g); Bulb $g; Arrow $g 58 6 44 20 9 }
+Icon "bulb_out" { param($g); Bulb $g; Arrow $g 45 17 57 5 9 }
+Icon "bulb_in" { param($g); Bulb $g; Arrow $g 57 5 45 17 9 }
 
 # a generator to the house and off it (the author, 2026-10-22: its options had none):
 # a plug, its two pins, its cord; the arrow - in or out
@@ -580,16 +594,16 @@ Icon "sort_rule" {
     Dot $g 10 32 3.5; Line $g 20 32 48 32
     Dot $g 10 50 3.5; Line $g 20 50 40 50
 }
-Icon "layout_save" { param($g); Grid3 $g; Lines $g @(36, 50, 44, 58, 60, 40) }
-Icon "layout_forget" { param($g); Grid3 $g; Line $g 40 42 58 60; Line $g 58 42 40 60 }
+Icon "layout_save" { param($g); Grid3 $g; Badge $g { Lines $g @(36, 50, 44, 58, 60, 40) } }
+Icon "layout_forget" { param($g); Grid3 $g; Badge $g { Line $g 40 42 58 60; Line $g 58 42 40 60 } }
 Icon "move_top" { param($g); Line $g 10 8 54 8; Arrow $g 32 58 32 18 12 }
 Icon "move_up" { param($g); Arrow $g 32 56 32 10 12 }
 Icon "move_down" { param($g); Arrow $g 32 8 32 54 12 }
 # the rules of Sort
 Icon "rule_zones" {
     param($g)
-    Box $g 6 6 24 24; Box $g 34 6 24 24
-    Box $g 6 34 24 24; Dot $g 46 46 6
+    Box $g 6 6 21 21; Box $g 37 6 21 21
+    Box $g 6 37 21 21; Dot $g 47.5 47.5 6
 }
 Icon "rule_dense" {
     param($g)
@@ -599,8 +613,8 @@ Icon "rule_dense" {
 }
 Icon "rule_name" {
     param($g)
-    Lines $g @(6, 52, 18, 12, 30, 52); Line $g 10 38 26 38
-    Arrow $g 46 10 46 54 9
+    Lines $g @(9, 52, 21, 12, 33, 52); Line $g 13 38 29 38
+    Arrow $g 49 10 49 54 9
 }
 Icon "rule_weight" {
     param($g)
@@ -620,13 +634,19 @@ Icon "recipes" {
 }
 Icon "craft_search" {
     param($g)
-    $st = Push $g -2 12 0.78; Hammer $g; $g.Restore($st)
-    Magnifier $g 42 20 12
+    # (the hammer down-left, the magnifier up-right: the hammer's head clear of the glass)
+    $st = PushK $g -8 18 0.74; Hammer $g; Pop $g $st
+    Badge $g { Magnifier $g 43 18 11 }
 }
 Icon "build_search" {
     param($g)
-    $st = Push $g -2 14 0.72; Bricks $g; $g.Restore($st)
-    Magnifier $g 44 20 12
+    # (the author 2026-11-13, the critic's question 7: no thinner than the others - two rows
+    # of bricks at full size in place of three scaled down)
+    Box $g 5 26 40 30
+    Line $g 5 41 45 41
+    Line $g 25 26 25 41
+    Line $g 15 41 15 56; Line $g 35 41 35 56
+    Badge $g { Magnifier $g 41 22 12 }
 }
 Icon "repair" {
     param($g)
@@ -636,10 +656,10 @@ Icon "repair" {
 }
 Icon "sew" {
     param($g)
-    Line $g 12 52 48 16
-    Circle $g 50 14 4 3
+    Line $g 12 50 46.5 15.5
+    Circle $g 50 12 4 3
     $p = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $p.AddBezier((F 52), (F 18), (F 58), (F 40), (F 30), (F 34), (F 30), (F 58))
+    $p.AddBezier((F 52), (F 16), (F 58), (F 38), (F 30), (F 32), (F 30), (F 56))
     $g.DrawPath((Pen 3), $p)
 }
 
@@ -653,23 +673,24 @@ Icon "rip" {
 }
 Icon "rope" {
     param($g)
-    Circle $g 30 30 22
-    Circle $g 30 30 13
-    Circle $g 30 30 4 3
+    # (the author 2026-11-13, the critic's question 8: the circles read as a magnifier or a
+    # target - a coil seen from the side, loops in a row, the end hanging; variant B)
+    foreach ($x in 8, 19, 30) { $g.DrawEllipse((Pen), (F $x), (F 6), (F 22), (F 40)) }
     $p = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $p.AddBezier((F 46), (F 46), (F 52), (F 52), (F 56), (F 50), (F 60), (F 58))
+    $p.AddBezier((F 52), (F 30), (F 60), (F 44), (F 50), (F 52), (F 56), (F 60))
     $g.DrawPath((Pen), $p)
 }
 Icon "bag" {
     param($g)
-    RRect $g 12 18 40 40 9
-    Arc $g 32 18 10 180 180
-    RRect $g 20 36 24 14 4
-    Line $g 12 30 52 30
+    RRect $g 12 17 40 40 9
+    Arc $g 32 17 10 180 180
+    RRect $g 20 34 24 14.5 4
+    Line $g 12 25.5 52 25.5
 }
 Icon "open" {
     param($g)
     # a can, its lid lifted on a hinge
+    $st0 = PushK $g 6.2 8 0.86
     $p = New-Object System.Drawing.Drawing2D.GraphicsPath
     $p.AddLine((F 12), (F 30), (F 12), (F 54))
     $p.AddArc((F 12), (F 48), (F 40), (F 12), 180, -180)
@@ -679,6 +700,7 @@ Icon "open" {
     $st = $g.Save(); $g.TranslateTransform(12, 26); $g.RotateTransform(-38)
     $g.DrawEllipse((Pen), (F 0), (F -12), (F 40), (F 12))
     $g.Restore($st)
+    Pop $g $st0
 }
 Icon "dismantle" {
     param($g)
@@ -697,17 +719,17 @@ Icon "autodrink" {
     Arc $g 32 32 25 -60 300
     $a = -60 * [Math]::PI / 180
     $ex, $ey = (32 + 25 * [Math]::Cos($a)), (32 + 25 * [Math]::Sin($a))
-    Line $g $ex $ey ($ex - 10) ($ey - 2)
-    Line $g $ex $ey ($ex + 2) ($ey + 10)
+    Line $g $ex $ey ($ex + 9.95) ($ey - 0.96)
+    Line $g $ex $ey ($ex + 4.15) ($ey + 9.10)
 }
 
 # what else a recipe takes (under its name in the menu): a toolbox
 Icon "needs" {
     param($g)
-    RRect $g 6 24 52 30 4
-    Lines $g @(22, 24, 22, 14, 42, 14, 42, 24)
-    Line $g 6 36 58 36
-    RRect $g 27 32 10 8 2 -fill
+    RRect $g 6 22 52 30 4
+    Lines $g @(22, 22, 22, 12, 42, 12, 42, 22)
+    Line $g 6 34 58 34
+    RRect $g 27 30 10 8 2 -fill
 }
 
 # The health tab (KnoxHealthCare: the body part menus' treatments, their headers) ----------
@@ -731,7 +753,7 @@ Icon "unbandage" {
     RRect $g 0 0 40 16 7
     RRect $g 13 0 14 16 2
     $g.Restore($st)
-    Arrow $g 40 24 56 8 9
+    Arrow $g 45 19 58 6 9   # (clear of the bandage - the author 2026-11-13)
 }
 Icon "splint" {
     param($g)
@@ -774,22 +796,22 @@ Icon "unstitch" {
     # stitches being cut: a stitched line and scissors' blades
     Line $g 6 46 34 46 3.5
     Line $g 10 40 10 52 3; Line $g 18 40 18 52 3; Line $g 26 40 26 52 3
-    Circle $g 44 16 6; Circle $g 54 30 6
-    Line $g 40 21 30 40; Line $g 48 32 30 40
+    Circle $g 41 14 6; Circle $g 54 30 6
+    Line $g 39 19.7 33 37; Line $g 48.3 31.9 33 37
 }
 Icon "unsplint" {
     param($g)
     RRect $g 12 14 9 44 3
     RRect $g 36 14 9 44 3
     Line $g 8 34 49 34
-    Arrow $g 48 22 58 6 8
+    Arrow $g 51 18 60 5 8   # (clear of the splint - the author 2026-11-13)
 }
 # the body's zones (a body part menu's header)
 Icon "zone_head" {
     param($g)
-    Circle $g 32 24 15
-    Line $g 26 40 26 50; Line $g 38 40 38 50
-    Lines $g @(12, 58, 18, 52, 46, 52, 52, 58)
+    Circle $g 32 22 15
+    Line $g 26 38 26 48; Line $g 38 38 38 48
+    Lines $g @(12, 56, 18, 50, 46, 50, 52, 56)
 }
 Icon "zone_thorax" {
     param($g)
@@ -809,16 +831,54 @@ Icon "zone_stomach" {
 Icon "zone_arm" {
     param($g)
     # an arm hanging down: the shoulder, the elbow, the hand
-    Circle $g 20 10 6
-    Lines $g @(14, 14, 18, 32, 30, 48)
-    Lines $g @(26, 12, 28, 30, 38, 42)
-    RRect $g 30 42 16 16 6
+    Circle $g 23 10 6
+    Lines $g @(17, 14, 21, 32, 33, 48)
+    Lines $g @(29, 12, 31, 30, 41, 42)
+    RRect $g 33 42 16 16 6
 }
 Icon "zone_leg" {
     param($g)
     # the thigh, the knee, the shin, the foot
     Lines $g @(18, 4, 20, 26, 24, 50, 22, 58, 50, 58, 48, 52, 38, 48, 36, 26, 40, 4)
-    Arc $g 29 27 5 0 360 3
+    Arc $g 28 27 5 0 360 3
+}
+
+# The crosshair panel (the author 2026-11-13, mockup .claude/mockups/vp_panel_empty_key.html, variants C,
+# checked by the critic): an empty container's row - an empty cell, four equal corners and a dash in the
+# middle of each side (gaps wide enough to open at 17 px); the car's key on hand - a fob and a blade with
+# two teeth (the hole and the teeth apart enough to read at 15 px).
+Icon "empty" {
+    param($g)
+    Lines $g @(12, 19, 12, 12, 19, 12); Lines $g @(45, 12, 52, 12, 52, 19)
+    Lines $g @(52, 45, 52, 52, 45, 52); Lines $g @(19, 52, 12, 52, 12, 45)
+    Line $g 29 12 35 12; Line $g 52 29 52 35; Line $g 29 52 35 52; Line $g 12 29 12 35
+}
+Icon "key" {
+    param($g)
+    RRect $g 5 19 23 26 8
+    Circle $g 16.5 32 2
+    Line $g 28 32 58 32
+    Line $g 43 32 43 41; Line $g 53 32 53 39
+}
+
+# "Рассмотреть" - the game's window with a brochure's picture (the author 2026-11-13, mockup
+# .claude/mockups/menu_picture_icon.html, variant C, critic's round 2): a picture in a frame - hills and
+# the sun - and a magnifier at its corner, the frame open evenly round it.
+Icon "picture" {
+    param($g)
+    $p = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $p.AddLine((F 30), (F 47), (F 9), (F 47))
+    $p.AddBezier((F 9), (F 47), (F 6.33), (F 47), (F 5), (F 45.67), (F 5), (F 43))
+    $p.AddLine((F 5), (F 43), (F 5), (F 13))
+    $p.AddBezier((F 5), (F 13), (F 5), (F 10.33), (F 6.33), (F 9), (F 9), (F 9))
+    $p.AddLine((F 9), (F 9), (F 47), (F 9))
+    $p.AddBezier((F 47), (F 9), (F 49.67), (F 9), (F 51), (F 10.33), (F 51), (F 13))
+    $p.AddLine((F 51), (F 13), (F 51), (F 26))
+    $g.DrawPath((Pen), $p)
+    Lines $g @(13, 38.6, 21, 29, 28, 37, 32, 33)
+    Circle $g 37 21 3
+    Circle $g 47 43 8
+    Line $g 53 49 60 56 6
 }
 
 Write-Host ("{0} icons in {1}" -f $script:names.Count, $dir)

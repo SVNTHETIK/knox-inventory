@@ -64,6 +64,32 @@ for slot, locs in pairs(E.SLOTS) do
     for i, name in ipairs(locs) do E.LOC[E.norm(name)] = {slot = slot, order = i} end
 end
 
+-- A mod's own location named after the game's goes to that one's slot (the author
+-- 2026-11-13: Spongie Open Jackets wears an unbuttoned jacket at "SpnOpenCloth:JACKET_OPEN",
+-- and it went to the accessories): the longest known name it starts with, "jacketopen" ->
+-- "jacket". Looked up once a location (the equipment column sorts every frame).
+local locGuess = {}
+
+--- {slot, order} of a normalized body location, or nil (an accessory).
+function E.locOf(n)
+    local m = E.LOC[n]
+    if m then return m end
+    if n == nil or n == "" then return nil end
+    local hit = locGuess[n]
+    if hit == nil then
+        local best = 0
+        hit = false
+        for name, at in pairs(E.LOC) do
+            local len = #name
+            if len >= 4 and len > best and len < #n and string.sub(n, 1, len) == name then
+                hit, best = at, len
+            end
+        end
+        locGuess[n] = hit
+    end
+    return hit or nil
+end
+
 -- Hidden things the game wears on the body: never shown.
 local function isHiddenLoc(n)
     return n == "bandage" or n == "wound" or n == "zeddmg" or n == "bellybutton"
@@ -97,7 +123,7 @@ function E.collect(player)
         local item = w:getItem()
         local n = E.norm(w:getLocation())
         if item and not isHiddenLoc(n) and not E.isHiddenItem(item) then
-            local m = E.LOC[n]
+            local m = E.locOf(n)
             if m then
                 table.insert(out[m.slot], item)
                 orders[item] = m.order
@@ -351,7 +377,8 @@ end
 
 KnoxEquipSlot = ISUIElement:derive("KnoxEquipSlot")
 
---- kind: "wear" (arg = slot id) or "hand" (arg = primary true/false)
+--- kind: "wear" (arg = slot id), "hand" (arg = primary true/false) or "both" (the both hands'
+--- slot under the hands: a thing held in both, both_hands.html - the author 2026-11-14)
 function KnoxEquipSlot:new(panel, kind, arg, label)
     local o = ISUIElement:new(0, 0, 10, 10)
     setmetatable(o, self)
@@ -375,8 +402,18 @@ function KnoxEquipSlot:items()
     if self.kind == "wear" then return p.worn[self.arg] or {} end
     local player = self:player()
     local item
+    if self.kind == "both" then
+        item = player:getPrimaryHandItem()
+        if item ~= player:getSecondaryHandItem() then item = nil end
+        return item and {item} or {}
+    end
     if self.arg then item = player:getPrimaryHandItem() else item = player:getSecondaryHandItem() end
     return item and {item} or {}
+end
+
+--- Is this thing held in both hands? (then the hands show it faint, the both hands' slot whole)
+local function inBoth(player, item)
+    return item ~= nil and item == player:getPrimaryHandItem() and item == player:getSecondaryHandItem()
 end
 
 --- Would dropping this item here do something?
@@ -387,6 +424,16 @@ function KnoxEquipSlot:fromOtherHand()
 end
 
 function KnoxEquipSlot:accepts(item)
+    if self.kind == "both" then
+        -- (from the body: off the hotbar, or out of a hand; held so already: nothing to do)
+        local e = KnoxDrag.entity
+        if inBoth(self:player(), item) then return false end
+        if e.fromBody and not (item:getAttachedSlot() and item:getAttachedSlot() > -1)
+                and e.slotId ~= "hand1" and e.slotId ~= "hand2" then
+            return false
+        end
+        return E.holdable(item)
+    end
     if self.kind == "hand" then
         local player = self:player()
         -- (from the body: off the hotbar, or out of the other hand - the author, 2026-10-29)
@@ -411,14 +458,16 @@ function KnoxEquipSlot:targetId()
     -- the author's FPS task 2026-10-28)
     if self.tid and self.tidArg == self.arg then return self.tid end
     local id
-    if self.kind == "hand" then id = self.arg and "hand1" or "hand2" else id = "wear:" .. self.arg end
+    if self.kind == "hand" then id = self.arg and "hand1" or "hand2"
+    elseif self.kind == "both" then id = "hands"
+    else id = "wear:" .. self.arg end
     self.tid, self.tidArg = id, self.arg
     return id
 end
 
 --- Slot a wearable item lands in: "wear:<slot>" (accessories for a mod's own location).
 function E.wearTarget(item)
-    local m = E.LOC[E.wearLoc(item)]
+    local m = E.locOf(E.wearLoc(item))
     return "wear:" .. (m and m.slot or "acc")
 end
 
@@ -438,6 +487,14 @@ function E.equipHand(player, item, primary, source)
     end)
 end
 
+--- Take an item in both hands (the game's "Equip both hands"), as a tracked move from `source`.
+function E.equipBoth(player, item, source)
+    local playerNum = player:getPlayerNum()
+    KnoxGrid.track(player, {item}, source, {kind = "slot", id = "hands"}, function()
+        ISInventoryPaneContextMenu.equipWeapon(item, true, true, playerNum)
+    end)
+end
+
 --- An item from the other hand into this one; what this hand holds goes to the
 --- other hand (a two-handed one only into the bag: one hand can't hold it).
 --- (the author, 2026-10-29: "can't move from the left hand straight to the right")
@@ -453,7 +510,9 @@ function KnoxEquipSlot:swapHands(item, source)
 end
 
 function KnoxEquipSlot:equip(item, source)
-    if self.kind == "hand" then
+    if self.kind == "both" then
+        E.equipBoth(self:player(), item, source)
+    elseif self.kind == "hand" then
         E.equipHand(self:player(), item, self.arg, source)
     else
         E.wearItem(self:player(), item, source)
@@ -501,17 +560,24 @@ end
 function KnoxEquipSlot:arrowRects()
     local w, h = self:getWidth(), self:getHeight()
     local s = math.max(14, math.floor(math.min(w, h) / 5))
-    local y = h - s - 8
+    local y = h - s - 3   -- (3 px from the edges all round - the author 2026-11-13; was 8 below)
     return {3, y, s, s}, {w - s - 3, y, s, s}
 end
 
+-- (centred in the frame's inside - the author 2026-11-13: "стрелочки не отцентрованы и стоят
+-- криво"; the critic measured 1 px low and right: the 2x2 dots grow from their top-left
+-- corner. The same dots and size; an odd spare pixel goes to the open side, the arrows mirrored)
 local function chevron(ui, r, dir, c)
-    local s = math.max(2, math.floor(r[3] / 4))
-    local cx, cy = r[1] + math.floor(r[3] / 2), r[2] + math.floor(r[4] / 2)
-    for i = 0, s do
-        local x = dir < 0 and (cx + math.floor(s / 2) - i) or (cx - math.floor(s / 2) + i)
-        ui:drawRect(x, cy - s + i, 2, 2, 1, c.r, c.g, c.b)
-        ui:drawRect(x, cy + s - i, 2, 2, 1, c.r, c.g, c.b)
+    local k = math.max(2, math.floor(r[3] / 4))
+    local iw, ih = r[3] - 2, r[4] - 2                 -- inside T.border's 1 px frame
+    local rx, ry = iw - (k + 2), ih - (2 * k + 2)     -- free room around the dots
+    local tip = math.floor(rx / 2)
+    local x0 = r[1] + 1 + (dir < 0 and tip or rx - tip)
+    local y0 = r[2] + 1 + math.floor(ry / 2)
+    for i = 0, k do
+        local x = dir < 0 and (x0 + k - i) or (x0 + i)
+        ui:drawRect(x, y0 + i, 2, 2, 1, c.r, c.g, c.b)
+        ui:drawRect(x, y0 + 2 * k - i, 2, 2, 1, c.r, c.g, c.b)
     end
 end
 
@@ -538,8 +604,21 @@ local function drawSlotBody(self, w, h, items, idx, item, alpha, cat, hl, over, 
     local fh = T.fontTileH
     if item then
         local areaH = h - fh
-        local side = math.floor(math.min(w, areaH) * 0.8)
-        T.itemIcon(self, item, math.floor((w - side) / 2), fh + math.floor((areaH - side) / 2) + dy, side, alpha * da)
+        if w >= h * 2 then
+            -- a slot much wider than high (both hands): the picture its whole height less 4 px
+            -- each side, in the middle of all of it - the name is in the corner, far from it
+            -- (both_hands.html, the author 2026-11-14: bigger, never out of the slot)
+            local side = h - 8
+            T.itemIcon(self, item, math.floor((w - side) / 2), 4 + dy, side, alpha * da)
+        else
+            local side = math.floor(math.min(w, areaH) * 0.8)
+            T.itemIcon(self, item, math.floor((w - side) / 2), fh + math.floor((areaH - side) / 2) + dy, side, alpha * da)
+        end
+        -- a gun's parts, as on its tile (not on the faint copy in a hand of a two-handed one)
+        if KnoxGridView and KnoxGridView.slotParts and not (self.kind == "hand" and inBoth(self:player(), item)) then
+            self.partsD = self.partsD or {}
+            KnoxGridView.slotParts(self, self.partsD, item, 0, dy, w, h, alpha * da)
+        end
     end
     if self.label then
         -- the name leaves room for the layer counter ("1/2") in the corner
@@ -571,10 +650,14 @@ function KnoxEquipSlot:render()
     local player = self:player()
     local alpha = 1
     local twoHandGhost = false
+    local dragged = false
     if leaving then
         item, alpha = leaving, 0.4
-    elseif self.kind == "hand" and not self.arg and item and item == player:getPrimaryHandItem() then
-        twoHandGhost, alpha = true, 0.3     -- two-handed: shown faint in the second hand
+    elseif self.kind == "hand" and inBoth(player, item) then
+        -- held in both hands: faint in each hand, whole in the both hands' slot (the author 2026-11-14)
+        twoHandGhost, alpha = true, 0.3
+    elseif item and KnoxDrag.entity and KnoxDrag.entity.item == item then
+        dragged, alpha = true, 0.3          -- being dragged out: faded, as a tile in a bag (the author 2026-11-14)
     end
     local live = item and not leaving
     local dragging = KnoxDrag.isActive()
@@ -598,7 +681,10 @@ function KnoxEquipSlot:render()
             slotLists[key], self.readyList = L, L
         end
         local layers = (#items > 1 and not leaving) and idx * 100 + #items or 0
-        local flags = (leaving and 1 or 0) + (twoHandGhost and 2 or 0) + (windowOpen and 4 or 0)
+        local flags = (leaving and 1 or 0) + (twoHandGhost and 2 or 0) + (windowOpen and 4 or 0) + (dragged and 8 or 0)
+        -- (a gun's part put on or taken off: drawn anew - the cells stayed as they were, the
+        -- author 2026-11-14)
+            + (KnoxGridView and KnoxGridView.partsEpoch or 0) * 16
         if T.listDraw(self, L, item or false, w * 10000 + h, flags, dy, da, T.levelKey(item, h, frac), layers, cat) then L = false end
     end
     if L ~= false then
@@ -622,6 +708,8 @@ function KnoxEquipSlot:render()
             or (live and T.color.tileFrame or T.color.tileEdge)
         if dragging and over then
             local ok = self:accepts(KnoxDrag.entity.item)
+                or (#KnoxDrag.extras == 0 and KnoxDrag.partFits(KnoxDrag.entity.item, self:liveItem(), self:player()))
+                or (#KnoxDrag.extras == 0 and KnoxDrag.ammoFor(KnoxDrag.entity.item, self:liveItem()) ~= nil)
             local c = ok and T.color.ok or T.color.bad
             self:drawRect(0, 0, w, h, 0.22, c.r, c.g, c.b)
             edge = c
@@ -639,13 +727,23 @@ function KnoxEquipSlot:render()
         KnoxContextMenu.drawTarget(self, 0, 0, w, h)   -- its context menu is open
     end
     if progress then T.progress(self, 0, 0, w, h, progress) end
+    -- fits the thing under the mouse (rounds for a gun in hand or on the back - the author 2026-11-14)
+    if live and not twoHandGhost and KnoxLoad and KnoxLoad.litA > 0 and KnoxLoad.shown[item] then
+        T.fits(self, 0, 0, w, h, KnoxLoad.litA)
+    end
     local use = live and KnoxGrid.useOf(items)
     if use then T.inUse(self, 0, 0, w, h, use) end
     if KnoxGrid.arrivingSlot(self.panel.pendingNow, self:targetId()) or E.isHinted(self:targetId()) then
         T.target(self, 0, 0, w, h)
     end
 
-    if over and live and not dragging then
+    -- (the mouse on a part's cell: that part's tooltip, nothing for the gun lit - as on a tile,
+    -- the author 2026-11-14)
+    local part = over and live and not dragging and not twoHandGhost and KnoxGridView and KnoxGridView.slotPartAt
+        and KnoxGridView.slotPartAt(self, self.partsD)
+    if part then
+        KnoxTooltip.want(part, self.panel.playerNum)
+    elseif over and live and not dragging then
         -- a gun in hand: what fits it lit up, its panel beside it (KnoxLoad, 2026-10-30)
         -- - with the quick items' key held; then no tooltip of its own over the panel's cells
         local panel = KnoxLoad and not twoHandGhost and instanceof(item, "HandWeapon") and KnoxLoad.panelOf(item) == "gun"
@@ -659,8 +757,8 @@ function KnoxEquipSlot:liveItem()
     local items, leaving = self:contents()
     if leaving then return nil end
     local item = items[self:shownIndex(items)]
-    if self.kind == "hand" and not self.arg and item == self:player():getPrimaryHandItem() then
-        return nil   -- the second hand of a two-handed weapon: use the first hand slot
+    if self.kind == "hand" and inBoth(self:player(), item) then
+        return nil   -- held in both hands: the both hands' slot works with it
     end
     return item
 end
@@ -673,7 +771,21 @@ function KnoxEquipSlot:arrowAt(x, y)
     return nil
 end
 
+--- The part under the mouse on the gun shown here, or nil.
+function KnoxEquipSlot:partUnderMouse()
+    local gun = self:liveItem()
+    if not gun or not KnoxGridView or not KnoxGridView.slotPartAt then return nil end
+    return KnoxGridView.slotPartAt(self, self.partsD), gun
+end
+
 function KnoxEquipSlot:onMouseDown(x, y)
+    -- (a plain click on a gun's part takes it off, as on a tile: no drag - the author 2026-11-14)
+    self.pressPart = nil
+    local part = self:partUnderMouse()
+    if part and KnoxControls.mods() == "" then
+        self.pressPart = part
+        return true
+    end
     local arrow = self:arrowAt(x, y)
     if arrow then
         self.press = {arrow = arrow}
@@ -699,6 +811,7 @@ end
 
 function KnoxEquipSlot:onMouseUpOutside(x, y)
     self.press = nil
+    self.pressPart = nil
 end
 
 --- The mouse wheel goes through the layers.
@@ -716,6 +829,8 @@ function KnoxEquipSlot:candidates()
         return E.candidates(self, player, function(it)
             return E.wearLoc(it) ~= "" and E.wearTarget(it) == id
         end)
+    elseif self.kind == "both" then
+        return E.candidates(self, player, function(it) return E.holdable(it) end)
     elseif self.kind == "hand" then
         local primary = self.arg
         return E.candidates(self, player, function(it)
@@ -730,13 +845,30 @@ function KnoxEquipSlot:pickFn()
     local player, slot = self:player(), self
     return function(it)
         local source = E.gridSourceOf(it, player)
-        if slot.kind == "hand" then E.equipHand(player, it, slot.arg, source) else E.wearItem(player, it, source) end
+        if slot.kind == "both" then E.equipBoth(player, it, source)
+        elseif slot.kind == "hand" then E.equipHand(player, it, slot.arg, source)
+        else E.wearItem(player, it, source) end
     end
 end
 
 function KnoxEquipSlot:onMouseUp(x, y)
     if KnoxDrag.isActive() then
         local e = KnoxDrag.entity
+        -- a part onto the gun held here: it goes on the gun, the gun stays in hand (the author 2026-11-14)
+        local gun = self:liveItem()
+        if #KnoxDrag.extras == 0 and KnoxDrag.partFits(e.item, gun, self:player()) then
+            KnoxDrag.cancel()
+            KnoxDrag.attachPart(self:player(), gun, e.item)
+            return true
+        end
+        -- a magazine or rounds onto the gun here: it is loaded (the author 2026-11-14)
+        local what = #KnoxDrag.extras == 0 and KnoxDrag.ammoFor(e.item, gun)
+        if what then
+            local items = e.items
+            KnoxDrag.cancel()
+            KnoxDrag.loadInto(self:player(), gun, items, what)
+            return true
+        end
         local ok = self:accepts(e.item)
         local other = self:fromOtherHand()
         local source = KnoxDrag.sourceInfo()
@@ -746,6 +878,13 @@ function KnoxEquipSlot:onMouseUp(x, y)
         elseif ok then
             self:equip(e.item, source)
         end
+        return true
+    end
+    local pp = self.pressPart
+    self.pressPart = nil
+    if pp then
+        local part, gun = self:partUnderMouse()
+        if part == pp then KnoxGridView.takePartOff(self:player(), part, gun) end
         return true
     end
     local p = self.press
@@ -894,6 +1033,13 @@ function KnoxEquipmentPanel:createChildren()
     -- switched: left hand (secondary) on top, right hand (primary) on bottom
     addSlot(self, KnoxEquipSlot:new(self, "hand", false, getText("IGUI_Knox_Slot_secondary")), hx, hy, hw, S)
     addSlot(self, KnoxEquipSlot:new(self, "hand", true, getText("IGUI_Knox_Slot_primary")), hx, hy + S + g, hw, S)
+    -- under them all, the full width: both hands (both_hands.html, the author 2026-11-14); a short
+    -- column (a small screen) gives it less height, the rest stays as it is
+    local by = hy + S * 2 + g * 2
+    local bh = math.min(S, self:getHeight() - pad - by)
+    if bh >= math.floor(S / 2) then
+        addSlot(self, KnoxEquipSlot:new(self, "both", nil, getText("IGUI_Knox_Slot_both")), pad, by, full, bh)
+    end
 end
 
 -- The character model: with the Java part it repeats the character's pose

@@ -393,12 +393,12 @@ function P:prerender()
             T.tileFill(self, x, y, cs, cs, level, T.category[T.categoryOf(it)], ta)
             if it == hovered then self:drawRect(x, y, cs, cs, 0.08, 1, 1, 1) end
             local side = math.floor(cs * 0.8)
-            T.itemIcon(self, it, x + math.floor((cs - side) / 2), y + math.floor((cs - side) / 2), side, ta)
-            if g and #g > 1 then
-                -- how many of it
-                T.outlinedRight(self, tostring(#g), x + cs - 4, y + cs - T.fontTileH - 3, T.color.bright, T.fontTile, ta)
-            end
-            T.tileFrame(self, x, y, cs, cs, it == hovered and T.color.accent or T.color.tileFrame, ta)
+            -- (how many of it: on its plate, the picture a little up - the author 2026-11-13)
+            local many = g and #g > 1
+            T.itemIcon(self, it, x + math.floor((cs - side) / 2), y + math.floor((cs - side) / 2) - (many and T.countLift(cs) or 0), side, ta)
+            local fc = it == hovered and T.color.accent or T.color.tileFrame
+            T.tileFrame(self, x, y, cs, cs, fc, ta)
+            if many then T.tileCount(self, x, y, cs, cs, tostring(#g), nil, T.color.bright, fc, ta) end
         end
     end
     if hovered then KnoxTooltip.want(hovered, self.playerNum) end
@@ -591,7 +591,8 @@ local counts = {}   -- a pile's count, made once each
 function P:loadTile(x, y, s, hot, a, own)
     local cs = self.cs
     local side = math.floor(cs * 0.8)
-    T.rect(self, x, y, cs, cs, T.category[T.categoryOf(s.item)] or T.color.cell, a)
+    -- (the category's glow, as every tile - the author 2026-11-14: it stayed flat here)
+    T.tileFill(self, x, y, cs, cs, nil, T.category[T.categoryOf(s.item)] or T.color.cell, a)
     if hot then self:drawRect(x, y, cs, cs, 0.08 * a, 1, 1, 1) end
     ISInventoryItem.renderItemIcon(self, s.item, x + math.floor((cs - side) / 2), y + math.floor((cs - side) / 2), a, side, side)
     if s.max then

@@ -124,15 +124,41 @@ public class KnoxIconFx {
             Texture.lastTextureID = -1;
         });
         pageMs = System.currentTimeMillis();
+        // (the author 2026-11-14, a screenshot: the grey pictures' edges ragged and dark, and
+        // stray dashes at their corners. The dashes: the page's pixels on the very rim of the
+        // icon's place - its neighbours' on the page; the rim is left clear. The dark edge: a
+        // clear pixel's colour is black on the page, and the filter mixed it into the edge -
+        // a clear pixel takes the grey of the visible ones next to it)
+        final int[] lum = new int[w * h], alpha = new int[w * h];
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
-                int from = ((y0 + y) * hwW + x0 + x) * 4, to = (y * outW + x) * 4;
+                int from = ((y0 + y) * hwW + x0 + x) * 4;
                 int r = page.get(from) & 255, g = page.get(from + 1) & 255, b = page.get(from + 2) & 255;
-                byte lum = (byte) Math.round(0.299f * r + 0.587f * g + 0.114f * b);
-                out.put(to, lum);
-                out.put(to + 1, lum);
-                out.put(to + 2, lum);
-                out.put(to + 3, page.get(from + 3));
+                boolean rim = x == 0 || y == 0 || x == w - 1 || y == h - 1;
+                lum[y * w + x] = Math.round(0.299f * r + 0.587f * g + 0.114f * b);
+                alpha[y * w + x] = rim ? 0 : page.get(from + 3) & 255;
+            }
+        }
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int i = y * w + x, l = lum[i];
+                if (alpha[i] == 0) {
+                    int sum = 0, n = 0;
+                    for (int dy = -1; dy <= 1; dy++) {
+                        for (int dx = -1; dx <= 1; dx++) {
+                            int nx = x + dx, ny = y + dy;
+                            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+                            int j = ny * w + nx;
+                            if (alpha[j] > 0) { sum += lum[j]; n++; }
+                        }
+                    }
+                    l = n > 0 ? sum / n : 0;
+                }
+                int to = (y * outW + x) * 4;
+                out.put(to, (byte) l);
+                out.put(to + 1, (byte) l);
+                out.put(to + 2, (byte) l);
+                out.put(to + 3, (byte) alpha[i]);
             }
         }
         final TextureID id = new TextureID(outW, outH, out);
@@ -146,9 +172,21 @@ public class KnoxIconFx {
     /** White stripes of this size, to be tinted: nil if they can't be had. */
     @LuaMethod(name = "knoxHatch", global = true)
     public static Texture knoxHatch(double width, double height) {
-        final int w = (int) width, h = (int) height;
+        return hatch((int) width, (int) height, STRIPE_PERIOD, STRIPE_WIDTH);
+    }
+
+    /** The same with stripes of its own: `period` pixels along a row from one to the next,
+     *  `stripe` of them lit (the free grid's zone: thinner and sparser than a magazine's -
+     *  the author 2026-11-15, mockup free_grid.html Z1). */
+    @LuaMethod(name = "knoxHatchStripes", global = true)
+    public static Texture knoxHatchStripes(double width, double height, double period, double stripe) {
+        final int p = Math.max(2, Math.min(64, (int) period));
+        return hatch((int) width, (int) height, p, Math.max(1, Math.min(p - 1, (int) stripe)));
+    }
+
+    private static Texture hatch(final int w, final int h, final int period, final int stripe) {
         if (hatchFailed || w <= 0 || h <= 0 || w > MAX_HATCH || h > MAX_HATCH) return null;
-        long key = ((long) w << 32) | h;
+        long key = ((long) w << 40) | ((long) h << 16) | ((long) period << 8) | stripe;
         Texture t = HATCH.get(key);
         if (t != null) return t;
         try {
@@ -160,7 +198,7 @@ public class KnoxIconFx {
                     out.put(to, (byte) 255);
                     out.put(to + 1, (byte) 255);
                     out.put(to + 2, (byte) 255);
-                    out.put(to + 3, (byte) (stripe(x, y) ? 255 : 0));
+                    out.put(to + 3, (byte) ((x + y) % period < stripe ? 255 : 0));
                 }
             }
             final TextureID id = new TextureID(outW, outH, out);

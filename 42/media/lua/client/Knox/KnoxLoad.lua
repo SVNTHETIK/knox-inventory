@@ -322,6 +322,29 @@ local function rebuild(now)
             end
         end
     end
+    -- what the characters hold and carry on them (hands, back...): their slots light up too
+    -- (the author 2026-11-14: rounds hovered, the gun in hand or on the back stayed unlit)
+    for i = 0, (getNumActivePlayers and getNumActivePlayers() or 0) - 1 do   -- (none outside the game: the offline tests)
+        local p = getSpecificPlayer(i)
+        if p and not p:isDead() then
+            local function try(it)
+                if it and it ~= cur and not lit[it] then
+                    local ft = it:getFullType()
+                    if fits[ft] and fitsNow(cur, curFt, it, ft) then
+                        lit[it] = true
+                        n = n + 1
+                    end
+                end
+            end
+            try(p:getPrimaryHandItem())
+            try(p:getSecondaryHandItem())
+            local att = p:getAttachedItems()
+            for k = 0, (att and att:size() or 0) - 1 do
+                local a = att:get(k)
+                try(a and a:getItem())
+            end
+        end
+    end
     -- (the same ones as before: the same table - a calm grid keeps its ready list while it stays,
     -- KnoxGridView renderGrid)
     local old, same = L.lit, n > 0
@@ -503,11 +526,28 @@ local function dirty()
     for _, v in ipairs(KnoxActions and KnoxActions.allViews() or EMPTY) do v:markDirty() end
 end
 
+--- Into the main inventory. Out of a bag on the character at once, no progress bar (the
+--- author 2026-11-14: a magazine in the backpack - "сначала тратится время ... и только потом
+--- зарядка"); off the floor or a container around, the game's time.
 local function toMain(player, it)
     local inv = player:getInventory()
-    if it:getContainer() ~= inv then
-        ISTimedActionQueue.add(ISInventoryTransferUtil.newInventoryTransferAction(player, it, it:getContainer(), inv))
+    local c = it:getContainer()
+    if c ~= inv then
+        local fast = c and c:isInCharacterInventory(player) and 1 or nil
+        ISTimedActionQueue.add(ISInventoryTransferUtil.newInventoryTransferAction(player, it, c, inv, fast))
     end
+end
+L.toMain = toMain
+
+--- The game's transferBullets with L.toMain: as many rounds of `key` as go in, brought to the
+--- main inventory; how many.
+function L.bringRounds(player, key, current, max)
+    local inv = player:getInventory()
+    local n = math.min(inv:getItemCountRecurse(key), max - current)
+    if n <= 0 then return 0 end
+    local items = inv:getSomeTypeRecurse(key, n)
+    for i = 0, items:size() - 1 do toMain(player, items:get(i)) end
+    return n
 end
 
 -- The game's actions -----------------------------------------------------------------
@@ -575,11 +615,16 @@ local nextLook = 0
 --- Where a magazine of `from` goes: first the one that has room.
 local function homesFor(player, from)
     local out = {}
+    -- (where it was taken from first: the author 2026-11-14 - "должны туда, откуда они были
+    -- взяты изначально"; then the rig, then the chosen container)
+    if from and from ~= player:getInventory() and from:isInCharacterInventory(player) then
+        table.insert(out, from)
+    end
     local E = KnoxEquip
     local worn = player:getWornItems()
     for i = 0, worn and worn:size() - 1 or -1 do
         local w = worn:get(i)
-        local at = E.LOC[E.norm(w:getLocation())]
+        local at = E.locOf(E.norm(w:getLocation()))
         local item = w:getItem()
         if at and at.slot == "rig" and item and instanceof(item, "InventoryContainer") then
             table.insert(out, item:getInventory())
@@ -587,9 +632,6 @@ local function homesFor(player, from)
     end
     local chosen = KnoxActions and KnoxActions.activeBag(player)
     if chosen then table.insert(out, chosen) end
-    if from and from ~= player:getInventory() and from:isInCharacterInventory(player) then
-        table.insert(out, from)
-    end
     return out
 end
 
@@ -598,12 +640,12 @@ end
 local function sendHome(player, mag, homes, layouts)
     local D = KnoxDrag
     local w, h = KnoxFootprint.get(mag, mag:getFullType())
-    local e = {item = mag, items = {mag}, w = w, h = h}
+    local e = {item = mag, items = {mag}, w = w, h = h, fast = true}   -- (at once: the author 2026-11-14)
     for _, c in ipairs(homes) do
         if D.allowedIn(mag, c, player) then
             local layout = layouts[c] or KnoxGrid.build(c, player)
             layouts[c] = layout
-            local x, y, r, joined = D.settle(layout, e)
+            local x, y, r, joined = D.settle(layout, e, player)
             if x then
                 D.moveTo(player, e, nil, layout, x, y, r)
                 if not joined then
@@ -670,6 +712,15 @@ local function lookBack()
 end
 L.lookBack = lookBack
 
+--- A magazine back from the pockets once free, to `from` first (sendBack).
+local function watchBack(player, mag, from)
+    waiting[mag] = {player = player, from = from, tries = 0}
+    if not looking then
+        looking = true
+        Events.OnTick.Add(lookBack)
+    end
+end
+
 --- Loading of `mag` was asked for: remembered, with where it is now.
 local function noteLoading(player, mag)
     -- (with the game's own inventory the game's way stands: the author, 2026-11-04)
@@ -680,6 +731,121 @@ local function noteLoading(player, mag)
         Events.OnTick.Add(lookBack)
     end
 end
+
+-- A magazine put into a gun and later taken out (the author 2026-11-14: they piled up in the
+-- pockets): the game takes it out as a new thing, so where it was taken from is kept on the gun
+-- (its bag's id, modData knoxMagFrom) and the one taken out goes back there, as a loaded one.
+local function bagOf(player, c)
+    local bag = c and c ~= player:getInventory() and c:isInCharacterInventory(player) and c:getContainingItem()
+    return bag and bag:getID() or nil
+end
+
+local function bagById(player, id)
+    if not id then return nil end
+    local it = player:getInventory():getItemWithIDRecursiv(id)
+    return it and instanceof(it, "InventoryContainer") and it:getInventory() or nil
+end
+
+if ISInsertMagazine then
+    local new = ISInsertMagazine.new
+    function ISInsertMagazine:new(character, gun, magazine, ...)
+        pcall(function()
+            if T.on("inventory") and instanceof(character, "IsoPlayer") and gun and magazine then
+                -- (already in the pockets - loaded there a moment ago, waiting to go back: its bag
+                -- all the same; the author 2026-11-14, a magazine taken out stayed in the pockets)
+                local id = bagOf(character, magazine:getContainer())
+                local w = waiting[magazine]
+                if not id and w then id = bagOf(character, w.from) end
+                local hp = not id and magazine:getModData().knoxH
+                if hp and type(hp.k) == "string" and string.sub(hp.k, 1, 1) == "i" then
+                    id = tonumber(string.sub(hp.k, 2))
+                end
+                gun:getModData().knoxMagFrom = id
+            end
+        end)
+        return new(self, character, gun, magazine, ...)
+    end
+end
+
+if ISEjectMagazine then
+    local unload = ISEjectMagazine.unloadAmmo
+    function ISEjectMagazine:unloadAmmo(...)
+        local chr, gun = self.character, self.gun
+        local had = gun and gun:isContainsClip()
+        local r = unload(self, ...)
+        pcall(function()
+            if not had or not T.on("inventory") or not instanceof(chr, "IsoPlayer") then return end
+            local md = gun:getModData()
+            local from = bagById(chr, md.knoxMagFrom)
+            md.knoxMagFrom = nil
+            -- (where from not known - in the gun since before: as a loaded one, the rig or the
+            -- chosen container; homesFor)
+            -- (the one just added: the last of its type in the pockets)
+            local items = chr:getInventory():getItems()
+            for i = items:size() - 1, 0, -1 do
+                local it = items:get(i)
+                if it:getFullType() == gun:getMagazineType() then
+                    watchBack(chr, it, from)
+                    break
+                end
+            end
+        end)
+        return r
+    end
+end
+
+-- Rounds and magazines between the pockets and a bag on the character: at once while a gun or
+-- a magazine is being loaded (the author 2026-11-14, the game's own reload in his trace: the
+-- magazine out of the backpack 48, each round 8, all of it back 3-19 - the bar and the hands'
+-- animation before the loading). Only then (the author the same day: moved by hand in the
+-- inventory - the game's time); off the floor or a container around - the game's time too.
+-- L.ctx: inside one of the game's loading functions (below); what such a move takes out of a
+-- bag goes back as fast (KnoxHome.fast).
+L.ctx = 0
+
+-- (no "wrapped once" flag: run again by the DEV reloader the game's own is wrapped anew -
+-- with a flag the old wrapper stayed, 2026-11-14)
+if ISInventoryTransferAction then
+    local new = ISInventoryTransferAction.new
+    function ISInventoryTransferAction:new(character, item, src, dst, time, ...)
+        local o = new(self, character, item, src, dst, time, ...)
+        if L.ctx > 0 and time == nil and o and item and src and dst and (o.maxTime or 0) > 1 then
+            pcall(function()
+                if not T.on("inventory") or not instanceof(character, "IsoPlayer") then return end
+                local inv = character:getInventory()
+                if src ~= inv and dst ~= inv then return end
+                local function mine(c) return c == inv or c:isInCharacterInventory(character) end
+                if not mine(src) or not mine(dst) then return end
+                local kind = L.kindOf(item:getFullType())
+                if kind == "mag" or kind == "ammo" then
+                    o.maxTime = 1
+                    if KnoxHome and KnoxHome.fast then KnoxHome.fast[item] = true end
+                end
+            end)
+        end
+        return o
+    end
+end
+
+--- The game's loading function `name` of `tbl`, its moves made at once (L.ctx).
+local function loading(tbl, name)
+    local orig = tbl and tbl[name]
+    if not orig then return end
+    tbl[name] = function(...)
+        L.ctx = L.ctx + 1
+        local ok, r1, r2 = pcall(orig, ...)
+        L.ctx = L.ctx - 1
+        if not ok then error(r1, 0) end
+        return r1, r2
+    end
+end
+local CM = ISInventoryPaneContextMenu
+for _, n in ipairs({"transferBullets", "onLoadBulletsInMagazine", "onUnloadBulletsFromMagazine",
+                    "onInsertMagazine", "onLoadBulletsIntoFirearm"}) do
+    loading(CM, n)
+end
+loading(ISReloadWeaponAction, "BeginAutomaticReload")
+loading(ISReloadWeaponAction, "ReloadBestMagazine")
 
 if ISLoadBulletsInMagazine and not L.loadWrapped then
     L.loadWrapped = true

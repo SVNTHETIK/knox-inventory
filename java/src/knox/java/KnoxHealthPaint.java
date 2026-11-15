@@ -67,6 +67,73 @@ public class KnoxHealthPaint {
             bounds();
         }
 
+        // the part's main island (the rows with its texels at more than half - a foot and a shin
+        // have a second, small one at the texture's top): its centre (where the wound's light is
+        // brightest, where blood runs down from) and its rows (a fracture's scan goes along them),
+        // in the mask's texels (2026-11-10)
+        public float cx = -1, cy = -1;
+        public int cy0, cy1;
+        private final Map<Integer, float[]> falls = new HashMap<>();
+
+        synchronized void core() {
+            if (cx >= 0) return;
+            int bestN = 0, run0 = -1, runN = 0;
+            double sx = 0, sy = 0, bx = w / 2.0, by = h / 2.0;
+            int b0 = 0, b1 = h - 1;
+            for (int y = 0; y <= h; y++) {
+                int n = 0;
+                double rx = 0;
+                if (y < h) {
+                    for (int x = 0; x < w; x++) {
+                        if (a[y * w + x] > .5f) {
+                            n++;
+                            rx += x;
+                        }
+                    }
+                }
+                if (n > 0) {
+                    if (run0 < 0) {
+                        run0 = y;
+                        runN = 0;
+                        sx = 0;
+                        sy = 0;
+                    }
+                    runN += n;
+                    sx += rx;
+                    sy += (double) y * n;
+                } else if (run0 >= 0) {
+                    if (runN > bestN) {
+                        bestN = runN;
+                        bx = sx / runN;
+                        by = sy / runN;
+                        b0 = run0;
+                        b1 = y - 1;
+                    }
+                    run0 = -1;
+                }
+            }
+            cy0 = b0;
+            cy1 = b1;
+            cy = (float) by;
+            cx = (float) bx;
+        }
+
+        /** exp(-d2 / c) for every texel, d2 the squared distance to the centre in the mockup's pixels. */
+        synchronized float[] fall(int c) {
+            float[] f = falls.get(c);
+            if (f != null) return f;
+            core();
+            f = new float[w * h];
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    double dx = (x - cx) * PX, dy = (y - cy) * PX;
+                    f[y * w + x] = (float) Math.exp(-(dx * dx + dy * dy) / c);
+                }
+            }
+            falls.put(c, f);
+            return f;
+        }
+
         void bounds() {
             x0 = w; y0 = h; x1 = -1; y1 = -1;
             for (int y = 0; y < h; y++) {
@@ -88,6 +155,50 @@ public class KnoxHealthPaint {
         public float r, g, b, a;
         public boolean light;   // light on the skin (towards white by rgb * a), not a colour over it
         public boolean see;     // the skin see-through by a (its alpha down, the colour premultiplied)
+        public int mode;        // the layer's mode as Lua gave it (see knoxHealthPaint)
+    }
+
+    // The health tab's light on the body as its mockup health_v3 draws it (drawBody; the author,
+    // 2026-11-10), on the skin's texels instead of the picture's pixels. The mockup's model is
+    // about 3.1 of its pixels a mask texel (the body 256 texels tall in the skin, 800 px on the
+    // page): its distances are kept in its pixels. Its "rim" (the model's edge light, a picture
+    // the skin does not have) is taken as its middle value.
+    static final float PX = 3.1f, RIM = .45f;
+    public static final int MODE_DIM = 3, MODE_SAND = 4, MODE_BLOOD = 5, MODE_STYLE = 10;
+    public static final int ST_HEAL = 0, ST_BLEED = 1, ST_INFECT = 2, ST_FRACTURE = 3, ST_GLASS = 4, ST_OPEN = 5;
+    private static final float[] NZ = new float[4096];
+
+    static {
+        for (int i = 0; i < NZ.length; i++) {
+            double v = Math.sin(i * 127.1 + 311.7) * 43758.5453;
+            NZ[i] = (float) Math.abs(v % 1);
+        }
+    }
+
+    // mockup: nz - smooth value noise over a 64-cell table
+    static float nz(float x, float y) {
+        int xi = (int) Math.floor(x), yi = (int) Math.floor(y);
+        float fx = x - xi, fy = y - yi;
+        float a = NZ[(yi & 63) * 64 + (xi & 63)], b = NZ[(yi & 63) * 64 + ((xi + 1) & 63)];
+        float c = NZ[((yi + 1) & 63) * 64 + (xi & 63)], d = NZ[((yi + 1) & 63) * 64 + ((xi + 1) & 63)];
+        float sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+        return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+    }
+
+    static float gb(float ph, float c, float w) {
+        float d = ph - c;
+        return (float) Math.exp(-(d * d) / (2 * w * w));
+    }
+
+    /** The time of the paint's animation (seconds). */
+    static float clock() {
+        return (float) ((System.nanoTime() % 3_600_000_000_000L) / 1e9);
+    }
+
+    /** The heart's beat now, 0..1 (the tab's ECG clock, KnoxWoundCanvas.beatPhase). */
+    static float beatNow() {
+        float ph = (float) KnoxWoundCanvas.beatPhase();
+        return Math.min(1f, gb(ph, .30f, .06f) + .55f * gb(ph, .52f, .08f));
     }
 
     /** A painted model (render thread): its skin and the skin's clean texels. */
@@ -234,9 +345,22 @@ public class KnoxHealthPaint {
      */
     public static void paint(byte[] clean, byte[] out, int w, int h, List<Layer> layers) {
         System.arraycopy(clean, 0, out, 0, clean.length);
+        float t = clock(), beat = beatNow();
         for (Layer l : layers) {
             Mask m = l.mask;
             if (m == null || m.x1 < 0) continue;
+            if (l.mode == MODE_DIM) {
+                dim(out, w, h, l);
+                continue;
+            }
+            if (l.mode == MODE_BLOOD) {
+                bloodDown(out, w, h, l, t);
+                continue;
+            }
+            if (l.mode == MODE_SAND || l.mode >= MODE_STYLE) {
+                styled(out, w, h, l, t, beat);
+                continue;
+            }
             // (a mask of another size: its texels scaled onto the skin's)
             int sx0 = m.x0 * w / m.w, sx1 = Math.min(w - 1, (m.x1 + 1) * w / m.w);
             int sy0 = m.y0 * h / m.h, sy1 = Math.min(h - 1, (m.y1 + 1) * h / m.h);
@@ -278,6 +402,161 @@ public class KnoxHealthPaint {
         }
     }
 
+    /**
+     * mockup drawBody: a wound's light by its style (mode 10 + style: 0 healing - breathes,
+     * 1 bleeding - beats with the heart, 2 infection - creeping noise, 3 fracture - a scan
+     * running along the part, 4 glass - glints, 5 open) or the sand of a thing that would
+     * treat the part (mode 4). a: its strength (the mockup's glow x hover); rgb: its colour.
+     */
+    static void styled(byte[] out, int w, int h, Layer l, float t, float beat) {
+        Mask m = l.mask;
+        m.core();
+        int style = l.mode - MODE_STYLE;
+        boolean sand = l.mode == MODE_SAND;
+        float[] f1 = null, f2 = null;
+        if (!sand) {
+            switch (style) {
+                case ST_BLEED: f1 = m.fall(3200); break;
+                case ST_INFECT: f1 = m.fall(9000); f2 = m.fall(2500); break;
+                case ST_FRACTURE: f1 = m.fall(3000); break;
+                case ST_GLASS: f1 = m.fall(1500); f2 = m.fall(2500); break;
+                case ST_OPEN: f1 = m.fall(2000); break;
+                default: f1 = m.fall(6000); break;
+            }
+        }
+        float breath = .86f + .14f * (float) Math.sin(t * 1.5);
+        float sandP = .72f + .28f * (float) Math.sin(t * 4.2);
+        // (the scan: up and down the part's main island in 2.6 s)
+        float u = (t / 2.6f) % 1f, tri = u < .5f ? u * 2 : 2 - u * 2;
+        float scanY = m.cy0 + (m.cy1 - m.cy0) * tri;
+        int glintT = (int) Math.floor(t * 7);
+        int sx0 = m.x0 * w / m.w, sx1 = Math.min(w - 1, (m.x1 + 1) * w / m.w);
+        int sy0 = m.y0 * h / m.h, sy1 = Math.min(h - 1, (m.y1 + 1) * h / m.h);
+        float cr = l.r, cg = l.g, cb = l.b;
+        for (int y = sy0; y <= sy1; y++) {
+            int my = y * m.h / h;
+            float scan = 0;
+            if (style == ST_FRACTURE && !sand) {
+                float sy = (my - scanY) * PX;
+                scan = (float) Math.exp(-sy * sy / 40);
+            }
+            for (int x = sx0; x <= sx1; x++) {
+                int mx = x * m.w / w, mi = my * m.w + mx;
+                float k = m.a[mi];
+                if (k <= 0.002f) continue;
+                int i = (y * w + x) * 4;
+                float r = out[i] & 255, g = out[i + 1] & 255, b = out[i + 2] & 255;
+                if (sand) {
+                    float a = l.a * k * (.2f + .4f * RIM) * sandP, dk2 = a * .5f;
+                    b *= 1 - dk2 * .46f;
+                    g *= 1 - dk2 * .1f;
+                    r += (255 - r) * .83f * a * .6f;
+                    g += (255 - g) * .76f * a * .6f;
+                    b += (255 - b) * .54f * a * .6f;
+                } else {
+                    float a;
+                    switch (style) {
+                        case ST_BLEED:
+                            a = (.20f + .55f * RIM) * (.6f + .4f * beat) + f1[mi] * (.5f + .45f * beat);
+                            break;
+                        case ST_INFECT: {
+                            float px = mx * PX, py = my * PX;
+                            float q = .6f * nz(px * .045f + t * .33f, py * .045f - t * .21f) + .4f * nz(px * .11f - t * .5f, py * .11f + t * .3f);
+                            float bl = q < .42f ? 0 : (q > .7f ? 1 : (q - .42f) / .28f);
+                            a = .12f + .45f * RIM + bl * (.25f + .5f * f1[mi]) + .25f * f2[mi];
+                            break;
+                        }
+                        case ST_FRACTURE:
+                            a = .22f + .55f * RIM + .7f * scan + .22f * f1[mi];
+                            break;
+                        case ST_GLASS: {
+                            a = .16f + .5f * RIM + .5f * f1[mi];
+                            // (the mockup's d2 < 2500: exp(-d2 / 2500) > 1/e)
+                            double hs = Math.abs(Math.sin(mx * 12.9898 + my * 78.233 + glintT * 3.7) * 43758.5453) % 1;
+                            if (hs > .985 && f2[mi] > .37f) a += .9f;
+                            break;
+                        }
+                        case ST_OPEN:
+                            a = .16f + .5f * RIM + .4f * f1[mi];
+                            break;
+                        default:
+                            a = (.16f + .5f * RIM + .22f * f1[mi]) * breath;
+                            break;
+                    }
+                    a *= l.a * k;
+                    if (a > 1) a = 1;
+                    float dk = a * .8f;
+                    r = r * (1 - dk * (1 - cr));
+                    g = g * (1 - dk * (1 - cg));
+                    b = b * (1 - dk * (1 - cb));
+                    float sa = a * .55f;
+                    r += (255 - r) * cr * sa;
+                    g += (255 - g) * cg * sa;
+                    b += (255 - b) * cb * sa;
+                }
+                out[i] = (byte) Math.min(255, Math.round(r));
+                out[i + 1] = (byte) Math.min(255, Math.round(g));
+                out[i + 2] = (byte) Math.min(255, Math.round(b));
+            }
+        }
+    }
+
+    /** mockup drawBody's dimAmt: everything but the part on the table darker (a: how far it has come). */
+    static void dim(byte[] out, int w, int h, Layer l) {
+        Mask m = l.mask;
+        for (int y = 0; y < h; y++) {
+            int my = y * m.h / h;
+            for (int x = 0; x < w; x++) {
+                float k = 1 - .38f * l.a * (1 - Math.min(1f, m.a[my * m.w + x * m.w / w]));
+                if (k >= .999f) continue;
+                int i = (y * w + x) * 4;
+                out[i] = (byte) Math.round((out[i] & 255) * k);
+                out[i + 1] = (byte) Math.round((out[i + 1] & 255) * k);
+                out[i + 2] = (byte) Math.round((out[i + 2] & 255) * k);
+            }
+        }
+    }
+
+    // mockup drawBody's DR: the drips running down from a bleeding {x offset px, speed, phase}
+    static final float[][] DRIPS = {{-7, .55f, 0}, {-1, .8f, .37f}, {5, .62f, .71f}, {10, .47f, .19f}};
+
+    /** mockup drawBody: blood running down from a bleeding part's middle (over whatever is below it). */
+    static void bloodDown(byte[] out, int w, int h, Layer l, float t) {
+        Mask m = l.mask;
+        m.core();
+        float sxw = (float) w / m.w, syh = (float) h / m.h;
+        int x0 = Math.max(0, (int) Math.floor((m.cx - 15 / PX) * sxw)), x1 = Math.min(w - 1, (int) Math.ceil((m.cx + 18 / PX) * sxw));
+        int y0 = Math.max(0, (int) Math.floor((m.cy - 2 / PX) * syh)), y1 = Math.min(h - 1, (int) Math.ceil((m.cy + 170 / PX) * syh));
+        for (int y = y0; y <= y1; y++) {
+            float yy = (y / syh - m.cy) * PX;
+            if (yy < -2 || yy > 170) continue;
+            for (int x = x0; x <= x1; x++) {
+                float ddx = (x / sxw - m.cx) * PX;
+                if (ddx < -14 || ddx > 17) continue;
+                float dr = 0;
+                for (float[] d : DRIPS) {
+                    float xx = ddx - d[0] - yy * .05f;
+                    if (xx > -4 && xx < 4) {
+                        float sv = ((yy - t * 46 * d[1]) / 64 + d[2]) % 1f;
+                        if (sv < 0) sv += 1;
+                        dr += (float) Math.exp(-xx * xx / 3.2) * sv * sv * sv;
+                    }
+                }
+                if (dr <= 0) continue;
+                int i = (y * w + x) * 4;
+                if ((out[i + 3] & 255) < 8) continue;   // (not on the skin's empty texels)
+                dr = Math.min(1, dr) * l.a * (1 - yy / 170) * .92f;
+                float r = out[i] & 255, g = out[i + 1] & 255, b = out[i + 2] & 255;
+                r += (190 - r) * dr;
+                g += (20 - g) * dr;
+                b += (16 - b) * dr;
+                out[i] = (byte) Math.round(r);
+                out[i + 1] = (byte) Math.round(g);
+                out[i + 2] = (byte) Math.round(b);
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ Lua
 
     static float num(KahluaTable t, int i) {
@@ -288,7 +567,9 @@ public class KnoxHealthPaint {
     /**
      * This frame's paint of a model: {path, r, g, b, a, soft, mode, path, ...}
      * (soft: how far the edge spreads, in texels; mode 0: a colour over the skin,
-     * 1: light on it, 2: the skin see-through by a), and the skeleton's bones
+     * 1: light on it, 2: the skin see-through by a, 3: all but the mask darker by a, 4: the
+     * sand of a thing that treats it, 5: blood running down from it, 10 + style: a wound's
+     * light - see styled), and the skeleton's bones
      * shown: {block, alpha, ...} (block: part index * 3 - the bones the whole and the broken share, + 1 only the whole's, + 2 only the broken's). An empty
      * list: the clean skin. False: no paint here (no model yet, or it failed) -
      * Lua then paints the old way.
@@ -301,6 +582,7 @@ public class KnoxHealthPaint {
         if (root == null) return false;
         ArrayList<Layer> list = new ArrayList<>();
         long sig = 17;
+        boolean animated = false;
         int n = layers == null ? 0 : layers.len();
         for (int i = 1; i + 6 <= n; i += 7) {
             Object p = layers.rawget(Double.valueOf(i));
@@ -313,14 +595,18 @@ public class KnoxHealthPaint {
             l.b = num(layers, i + 3);
             l.a = num(layers, i + 4);
             float mode = num(layers, i + 6);
-            l.light = mode > 0.5f && mode < 1.5f;
-            l.see = mode > 1.5f;
+            l.mode = Math.round(mode);
+            l.light = l.mode == 1;
+            l.see = l.mode == 2;
+            if (l.mode >= MODE_SAND) animated = true;
             if (l.a <= 0.003f) continue;
             list.add(l);
             sig = sig * 31 + System.identityHashCode(l.mask);
             sig = sig * 31 + Math.round(l.r * 255) * 65536L + Math.round(l.g * 255) * 256L + Math.round(l.b * 255);
             sig = sig * 31 + Math.round(l.a * 400) + Math.round(mode) * 1000;
         }
+        // (a layer that moves by itself - a beat, a scan, glints: painted again 30 times a second)
+        if (animated) sig = sig * 31 + System.nanoTime() / 33_333_333L;
         float[] show = new float[BLOCKS];
         long boneSig = 7;
         int nb = bones == null ? 0 : bones.len();

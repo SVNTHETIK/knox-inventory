@@ -152,11 +152,31 @@ function D.joinTarget(layout, e)
     return nil
 end
 
+--- What a tile's things weigh, as the game counts them carried loose.
+local function tileKg(e)
+    local kg = 0
+    for _, it in ipairs(e.items) do kg = kg + KnoxGrid.weightOf(it) end
+    return kg
+end
+
+--- No limit (KnoxGrid.free): with no cells to run out of, only weight stops a batch (Take all,
+--- a selection, shift+click). Is there weight left in the layout's container for tile `e` on
+--- top of what this batch has already sent there (layout.inKg, D.moveTo)? The game's own check
+--- sees only what is in it now - the rest of a Take all would fail one by one when its turn came.
+function D.weightRoom(layout, e, player)
+    local more = layout.inKg
+    if not (layout.free and player and more and more > 0) then return true end
+    local ok, room = pcall(function() return layout.container:hasRoomFor(player, more + tileKg(e)) end)
+    return not ok or room == true
+end
+
 --- Where a tile goes when only the container is given (shift+click, Take all,
 --- dropped on a bag): onto a same-type stack there when it has room (it joins
 --- it), else the first free place as a tile of its own.
+--- (`player`: when given, the weight this batch already sends there counts - D.weightRoom)
 --- @return x, y, r, joined   (x is nil: no room)
-function D.settle(layout, e)
+function D.settle(layout, e, player)
+    if not D.weightRoom(layout, e, player) then return nil end
     local t = D.joinTarget(layout, e)
     if t then
         KnoxGrid.setStackId(e.items, t.item:getModData().knoxS)
@@ -204,6 +224,69 @@ function D.magTarget(view)
     local m = magFor(t, e.item:getFullType())
     if m then return t, m end
     return nil
+end
+
+-- Dropping a weapon part (a laser, a scope, a sling...) onto a gun puts it on the gun (the author
+-- 2026-11-14) - on its tile in a grid or in a hand slot: the game's action, as its menu does it
+-- (ISInventoryPaneContextMenu.onUpgradeWeapon: the gun into the main inventory if needed, a
+-- screwdriver in hand if there is one). Only where it goes: its place on the gun free, the gun whole.
+
+--- Would this part go on this gun now?
+function D.partFits(part, weapon, player)
+    if not part or not weapon or part == weapon or not player then return false end
+    if not instanceof(part, "WeaponPart") or not instanceof(weapon, "HandWeapon") then return false end
+    if weapon:isBroken() or weapon:getWeaponPart(part:getPartType()) ~= nil then return false end
+    local ok, can = pcall(function() return part:canAttach(player, weapon) end)
+    return ok and can == true
+end
+
+--- The gun's tile under the cursor that the dragged part would go on, and the gun.
+function D.partTarget(view)
+    local e = D.entity
+    if not e or #D.extras > 0 or not view:isMouseOver() then return nil end
+    local t = view:entityUnderMouse()
+    if not t or t.item == e.item or t.ghost then return nil end
+    local player = view:player()
+    for _, w in ipairs(t.items) do
+        if D.partFits(e.item, w, player) then return t, w end
+    end
+    return nil
+end
+
+--- Put the part on the gun.
+function D.attachPart(player, weapon, part)
+    -- (at once, no action: the author 2026-11-14, KnoxGridView.putPartOn)
+    if KnoxGridView and KnoxGridView.putPartOn and KnoxGridView.putPartOn(player, weapon, part) then return end
+    ISInventoryPaneContextMenu.onUpgradeWeapon(weapon, part, player)
+end
+
+-- Dropping a magazine or rounds onto a gun in a body slot - the back, a hand, both hands (the
+-- author 2026-11-14, a screenshot of them): a magazine of its type goes in (the one in it out
+-- first), rounds of its own into a gun that takes them itself. The game's actions, as the Shift
+-- panel does it (KnoxLoad): the gun into the hands for them.
+
+--- What dropping `item` onto `gun` would do: "insert", "rounds" or nil.
+function D.ammoFor(item, gun)
+    if not item or not gun or item == gun or not instanceof(gun, "HandWeapon") then return nil end
+    if gun:isBroken() then return nil end
+    local ft = item:getFullType()
+    local magType = gun:getMagazineType()
+    if magType and magType ~= "" then
+        return ft == magType and "insert" or nil
+    end
+    local at = gun:getAmmoType()
+    if not at or gun:isJammed() or gun:getCurrentAmmoCount() >= gun:getMaxAmmo() then return nil end
+    if ft == at:getItemKey() or (KnoxCompat and KnoxCompat.roundFits(gun, ft)) then return "rounds" end
+    return nil
+end
+
+--- Do it: the dragged `items` into the gun.
+function D.loadInto(player, gun, items, what)
+    if what == "insert" then
+        KnoxLoad.insertMagazine(player, gun, items[1])
+    elseif what == "rounds" then
+        KnoxLoad.loadGun(player, gun, {items = items})
+    end
 end
 
 -- Dropping onto a bag's tile puts the item into that bag (first free place
@@ -338,7 +421,7 @@ local function dropIntoBag(bag, player, source, extras)
         D.explain(player, why)
         return false
     end
-    local x, y, r, joined = D.settle(layout, e)
+    local x, y, r, joined = D.settle(layout, e, player)
     if not x then return false end
     D.moveTo(player, e, source, layout, x, y, r)
     if not joined then
@@ -348,7 +431,7 @@ local function dropIntoBag(bag, player, source, extras)
     for _, ex in ipairs(extras) do
         local te = ex.entity
         if te.item ~= bag.item and D.allowedIn(te.item, layout.container, player) then
-            local fx, fy, fr, fjoined = D.settle(layout, te)
+            local fx, fy, fr, fjoined = D.settle(layout, te, player)
             if fx then
                 D.moveTo(player, te, D.sourceOf(te, ex.view), layout, fx, fy, fr)
                 if not fjoined then
@@ -385,7 +468,7 @@ function D.dropInto(container, player)
         return false
     end
     local layout = KnoxGrid.build(container, player)
-    local x, y, r, joined = D.settle(layout, e)
+    local x, y, r, joined = D.settle(layout, e, player)
     if not x then
         -- (the admin's Unlimited Carry: no place, it goes in all the same - KnoxActions.unlimited)
         if KnoxActions and KnoxActions.unlimited(player) and container == player:getInventory() then
@@ -395,7 +478,7 @@ function D.dropInto(container, player)
             return true
         end
         -- (too big for every grid of the character: into the hands)
-        if KnoxActions and (container == player:getInventory() or container:isInCharacterInventory(player))
+        if KnoxActions and KnoxGrid.onCharacter(container, player)
                 and KnoxActions.carryIfTooBig(player, e) then
             return true
         end
@@ -410,7 +493,7 @@ function D.dropInto(container, player)
     for _, ex in ipairs(extras) do
         local te = ex.entity
         if te.item:getContainer() ~= container and D.allowedIn(te.item, container, player) then
-            local fx, fy, fr, fjoined = D.settle(layout, te)
+            local fx, fy, fr, fjoined = D.settle(layout, te, player)
             if fx then
                 D.moveTo(player, te, D.sourceOf(te, ex.view), layout, fx, fy, fr)
                 if not fjoined then
@@ -435,7 +518,9 @@ function D.canDrop(layout, x, y, player, merge)
         return D.allowedIn(e.item, dest, player)
     end
     local w, h = D.dims()
-    if y + h > (layout.baseRows or layout.rows) then return false end   -- the overflow rows take nothing
+    -- the overflow rows take nothing (no limit: there are none - under the last row the grid grows)
+    if not layout.free and y + h > (layout.baseRows or layout.rows) then return false end
+    if layout.free and y >= layout.rows then return false end   -- (its top in the grid or its zone, not further down)
     -- (its own cells are free for a tile moved within its grid; not for some of
     -- a stack taken out of it: the stack stays where it is. From elsewhere, its
     -- own place waiting for it there - KnoxHome's silhouette - is free to it too)
@@ -471,6 +556,7 @@ function D.moveTo(player, e, source, layout, x, y, r)
         return
     end
     KnoxGrid.writePending(e, layout.key, x, y, r)
+    if layout.free then layout.inKg = (layout.inKg or 0) + tileKg(e) end   -- (D.weightRoom)
     local playerNum = player:getPlayerNum()
     local target = {kind = "grid", key = layout.key, container = layout.container, x = x, y = y, r = r}
     KnoxGrid.track(player, e.items, source, target, function()
@@ -488,8 +574,9 @@ function D.moveTo(player, e, source, layout, x, y, r)
                 end
             end
             if item:getContainer() ~= layout.container then
+                -- (`fast`: at once - a thing put away by a hotbar key going home, KnoxHome.fast)
                 ISTimedActionQueue.add(ISInventoryTransferUtil.newInventoryTransferAction(
-                    player, item, item:getContainer(), layout.container))
+                    player, item, item:getContainer(), layout.container, e.fast and 1 or nil))
             end
         end
     end)
@@ -508,6 +595,19 @@ function D.drop(view, x, y, player)
             return false
         end
         KnoxLoad.loadMagazine(player, mag, {items = items})
+        view:markDirty()
+        return true
+    end
+    local partTile, weapon = D.partTarget(view)
+    if partTile then
+        local far = outOfReach(player, e, weapon:getContainer())
+        local part = e.item
+        D.cancel()
+        if far then
+            D.explain(player, "IGUI_Knox_TooFar")
+            return false
+        end
+        D.attachPart(player, weapon, part)
         view:markDirty()
         return true
     end
@@ -541,14 +641,14 @@ function D.drop(view, x, y, player)
     -- character: KnoxActions.mustCarry; the floor, a shelf, a boot take it as before)
     local into = layout and layout.container
     if ok and KnoxActions and KnoxActions.mustCarry(e.item) and into
-            and (into == player:getInventory() or into:isInCharacterInventory(player)) then
+            and KnoxGrid.onCharacter(into, player) then
         ok, why = false, nil
     end
     if not ok then
         -- dropped on a grid of the character, but too big for any of them: into the hands
         local dest = layout and layout.container
         if not why and not merge and dest and KnoxActions and e.item:getContainer() ~= dest
-                and (dest == player:getInventory() or dest:isInCharacterInventory(player))
+                and KnoxGrid.onCharacter(dest, player)
                 and KnoxActions.carryIfTooBig(player, e) then
             view:markDirty()
             return true
@@ -587,7 +687,7 @@ function D.drop(view, x, y, player)
             local te = ex.entity
             if te.item:getContainer() ~= layout.container and D.allowedIn(te.item, layout.container, player) then
                 local src = D.sourceOf(te, ex.view)
-                local fx, fy, fr, fjoined = D.settle(layout, te)
+                local fx, fy, fr, fjoined = D.settle(layout, te, player)
                 if fx then
                     D.moveTo(player, te, src, layout, fx, fy, fr)
                     if not fjoined then

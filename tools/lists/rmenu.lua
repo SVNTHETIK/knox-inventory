@@ -569,7 +569,8 @@ newItem("Base.Bullets9mmBox", INV)
 newItem("Base.Bullets9mmBox", INV)
 newItem("Base.ShotgunShellsBox", INV)
 check("no gun, no magazines: opens on the boxes", open())
-check("a row for each type", kinds() == "box,box", kinds())
+-- (and "open all" under them from 2 boxes up - the author 2026-11-14)
+check("a row for each type", kinds() == "box,box,openall", kinds())
 KEYS[R] = true
 frames(40)
 -- a box being opened: its bar on its row, and pressed again it is not begun anew
@@ -971,7 +972,8 @@ looks()
 INV:add(mq)
 QUEUE[1] = nil
 looks()
-check("still in the bag, the transfer in the queue: not forgotten, goes back", mq.container == rig)
+-- (back where it was taken from first, then the rig - the author 2026-11-14)
+check("still in the bag, the transfer in the queue: not forgotten, goes back", mq.container == pack, mq.container and mq.container.name)
 local mc = loaded(pack)
 QUEUE[1] = {Type = "ISInventoryTransferAction"}
 looks()
@@ -1005,7 +1007,7 @@ looks()
 check("back: not while aiming", m5.container == INV)
 AIMING = nil
 looks()
-check("back: rig first, whatever is worn first", m5.container == rig)
+check("back: where it was taken from first (the author 2026-11-14)", m5.container == pack, m5.container and m5.container.name)
 ROOM[rig] = 0
 local m6 = loaded(rig)
 INV:add(m6)

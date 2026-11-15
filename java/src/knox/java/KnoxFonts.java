@@ -30,6 +30,15 @@ public class KnoxFonts {
         return Math.max(MIN_SIZE, Math.min(MAX_SIZE, (int) Math.round(size)));
     }
 
+    // Past the biggest atlas (the health tab's big number, 78 px in its mockup - the author,
+    // 2026-11-10): the 44 px atlas drawn scaled up; its width, height and pixels scaled alike.
+    public static final int BIG_MAX = 120;
+
+    static float scaleOf(double size) {
+        double px = Math.min(BIG_MAX, Math.round(size));
+        return px > MAX_SIZE ? (float) (px / MAX_SIZE) : 1f;
+    }
+
     // (every draw, measure and height asks for its font: Knox's three styles by size
     // in arrays, without building the name of the atlas each time - v57)
     private static final String[] STYLES = {"body", "title", "head"};
@@ -88,7 +97,9 @@ public class KnoxFonts {
             TextManager.instance.DrawString(game, x, y, text, r, g, b, a);
             return;
         }
-        f.drawString((float) x, (float) y, text, (float) r, (float) g, (float) b, (float) a);
+        float sc = scaleOf(size);
+        if (sc != 1f) f.drawString((float) x, (float) y, sc, text, (float) r, (float) g, (float) b, (float) a);
+        else f.drawString((float) x, (float) y, text, (float) r, (float) g, (float) b, (float) a);
     }
 
     /**
@@ -126,7 +137,9 @@ public class KnoxFonts {
     public static int knoxTextWidth(String style, double size, String text) {
         if (text == null) return 0;
         AngelCodeFont f = font(style, size);
-        return f == null ? 0 : f.getWidth(text);
+        if (f == null) return 0;
+        float sc = scaleOf(size);
+        return sc != 1f ? Math.round(f.getWidth(text) * sc) : f.getWidth(text);
     }
 
     /**
@@ -186,6 +199,11 @@ public class KnoxFonts {
             pen += d.xadvance;
         }
         if (right < left) return "";
+        float sc = scaleOf(size);
+        if (sc != 1f) {
+            return (int) Math.floor(left * sc) + "," + (int) Math.floor(top * sc) + ","
+                    + (int) Math.ceil(right * sc) + "," + (int) Math.ceil(bottom * sc);
+        }
         return left + "," + top + "," + right + "," + bottom;
     }
 
@@ -235,6 +253,7 @@ public class KnoxFonts {
     @LuaMethod(name = "knoxFontHeight", global = true)
     public static int knoxFontHeight(String style, double size) {
         AngelCodeFont f = font(style, size);
-        return f == null ? clampSize(size) : f.getLineHeight();
+        float sc = scaleOf(size);
+        return f == null ? Math.round(clampSize(size) * sc) : Math.round(f.getLineHeight() * sc);
     }
 }

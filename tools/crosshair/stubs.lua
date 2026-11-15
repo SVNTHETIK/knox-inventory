@@ -100,12 +100,16 @@ function T.switch(k) return SWITCHES[k] end
 function T.animOn() return true end
 function T.anim(t) return math.max(0, math.min(1, t)) end
 function T.makeFont(style, size) return {key = style .. size} end
+LOOKS = {}
+function T.look(k) return LOOKS[k] or 100 end
 function T.measure(f, s) return string.len(s or "") * 7 end
 function T.upper(s) return string.upper(s) end
 function T.fit(s) return s end
 function T.mix(a, b, k) return {r = a.r + (b.r - a.r) * k, g = a.g + (b.g - a.g) * k, b = a.b + (b.b - a.b) * k} end
 DRAWN = {rect = 0, label = 0, stencil = 0, unstencil = 0}
 function T.rect() DRAWN.rect = DRAWN.rect + 1 end
+function T.glowRect() DRAWN.rect = DRAWN.rect + 1 end
+function T.itemColor(_, c) return c end
 function T.border() DRAWN.rect = DRAWN.rect + 1 end
 function T.tileFrame() DRAWN.rect = DRAWN.rect + 1 end
 function T.label(ui, s, band, c, o)
@@ -133,6 +137,7 @@ end
 UI = {}
 function UI:drawRect() DRAWN.rect = DRAWN.rect + 1 end
 function UI:drawTextureScaledAspect() DRAWN.rect = DRAWN.rect + 1 end
+function UI:drawTextureScaled() DRAWN.rect = DRAWN.rect + 1 end
 -- (the game's clips nest: a level each, a clear takes one off; a box taken off inside
 -- another is painted back - repaintStencilRect - and never with no clip on)
 STENCIL = {level = 0, left = 0, bad = 0}

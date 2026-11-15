@@ -5,8 +5,8 @@
 --     take the bandage off first"), under a header naming the part and its state;
 --   * quick treatment (Shift + click): everything the part needs that the
 --     character has things for, queued in medical order;
---   * things dropped on the body: the game's drop (dropItemsOnBodyPart), Casualties
---     Undead's first;
+--   * a step of the table (the health tab, its mockup health_v3): one game action, C.doStep
+--     (things are no longer dropped on the body - the author, 2026-11-10);
 --   * the kit: what the character carries that treats, and which parts each
 --     thing would treat now (the model lights them while it's under the mouse).
 -- The menus and the drop go through the game's own health panel of the player
@@ -601,24 +601,182 @@ function C.quickTreat(player, bp, dry)
     return steps
 end
 
--- Drops --------------------------------------------------------------------------------
+-- Steps (the health tab's table, its mockup health_v3 - the author, 2026-11-10) -------------------
+-- One step of a part's treatment (KnoxHealthWounds.STEPS) as the game's own timed action, with
+-- the thing for it brought to the main inventory first, picked the way the game's handlers pick
+-- (or the one the player clicked in the kit). Things are no longer dropped on the body (the
+-- author: a click, the right button, a double click on pills instead).
 
---- Things dropped on a body part: Casualties Undead's first, then the game's. Returns
---- "menu" when the part's menu should open instead (a choice to make).
-function C.drop(player, bp, items, sx, sy)
-    if CU then
-        local res = CU.dropItems(player, player, bp, items)
-        if res == true then return true end
-        if res == "menu" then
-            C.openMenu(player, bp, sx, sy, nil)
-            return "menu"
+C.reachable = reachableItems
+
+-- the best thing among `items` for a step (prefer: the player's choice, when it fits)
+local STEP_SCORE = {
+    tw = bool(isGlassTool),
+    bullet = bool(isBulletTool),
+    burn = function(i)
+        local s = bandageScore(i)
+        return s and i:getBandagePower() >= 2 and -s or nil
+    end,
+    clean = bool(isDisinfectant),
+    bandage = bandageScore,
+    stitch = function(i) return i:getType() == "SutureNeedle" and 1 or nil end,
+    splint = function(i) return i:getType() == "Splint" and 0 or nil end,
+}
+
+--- The thing a step would use: an item, or nil (unb: always nil - by hand; tw: nil by hand too).
+--- For stitches with a needle and thread apart: the thread (the needle goes along).
+function C.stepItem(items, stepId, prefer)
+    local score = STEP_SCORE[stepId]
+    if not score then return nil end
+    if prefer then
+        local ok, res = pcall(score, prefer)
+        if ok and res then return prefer end
+        if stepId == "stitch" and (prefer:getType() == "Needle" or prefer:getType() == "Thread") then
+            return prefer
         end
     end
-    local panel = C.carePanel(player)
-    if not panel then return false end
-    panel:dropItemsOnBodyPart(bp, items)
+    local used = {}
+    local best = pick(items, used, score)
+    if best or stepId ~= "stitch" then return best end
+    -- (a needle and thread apart: the game stitches with the thread, the needle in the bag)
+    local needle = pick(items, used, function(i)
+        return (i:getType() == "Needle" or hasTag(i, ItemTag and ItemTag.SEWING_NEEDLE)) and 0 or nil
+    end)
+    local thread = needle and pick(items, used, function(i)
+        return (i:getType() == "Thread" or hasTag(i, ItemTag and ItemTag.THREAD)) and 0 or nil
+    end)
+    return thread
+end
+
+--- Can the step be done now with what is carried? (unb, glass by hand: always)
+function C.stepCan(items, bp, stepId)
+    if stepId == "unb" then return bp:bandaged() end
+    if stepId == "tw" then return bp:haveGlass() and not bp:bandaged() end
+    if bp:bandaged() and stepId ~= "splint" then return false end
+    if stepId == "splint" then
+        if C.stepItem(items, "splint") then return true end
+        local used = {}
+        local plank = pick(items, used, function(i) return SPLINT_PLANKS[i:getType()] and 0 or nil end)
+        return plank ~= nil and pick(items, used, function(i) return i:getType() == "RippedSheets" and 0 or nil end) ~= nil
+    end
+    return C.stepItem(items, stepId) ~= nil
+end
+
+--- Queues one step on the player's own body part; returns the step's timed action (nil: it
+--- could not be done). prefer: the kit's thing the player clicked.
+function C.doStep(player, bp, stepId, prefer)
+    local p = player
+    local items = reachableItems(p)
+    local function bring(...)
+        for _, it in ipairs({...}) do
+            if it then ISInventoryPaneContextMenu.transferIfNeeded(p, it) end
+        end
+    end
+    local action
+    if string.sub(stepId, 1, 1) == "x" then
+        -- a done step taken back (its mini-game: KnoxHealthGames)
+        return C.undoStep(player, bp, string.sub(stepId, 2))
+    elseif stepId == "unb" then
+        if not bp:bandaged() then return nil end
+        action = ISApplyBandage:new(p, p, nil, bp, false)
+    elseif stepId == "tw" then
+        local tool = C.stepItem(items, "tw", prefer)
+        bring(tool)
+        action = ISRemoveGlass:new(p, p, bp, tool == nil)
+    elseif stepId == "bullet" then
+        local tool = C.stepItem(items, "bullet", prefer)
+        if not tool then return nil end
+        bring(tool)
+        action = ISRemoveBullet:new(p, p, bp)
+    elseif stepId == "burn" then
+        local cloth = C.stepItem(items, "burn", prefer)
+        if not cloth then return nil end
+        bring(cloth)
+        action = ISCleanBurn:new(p, p, cloth, bp)
+    elseif stepId == "clean" then
+        local alcohol = C.stepItem(items, "clean", prefer)
+        if not alcohol then return nil end
+        bring(alcohol)
+        action = ISDisinfect:new(p, p, alcohol, bp)
+    elseif stepId == "stitch" then
+        local it = C.stepItem(items, "stitch", prefer)
+        if not it then return nil end
+        if it:getType() == "SutureNeedle" then
+            bring(it)
+            action = ISStitch:new(p, p, it, bp, true)
+        else
+            -- a needle and thread: both to hand, the game stitches with the thread
+            local used = {[it] = true}
+            local isNeedle = it:getType() == "Needle" or hasTag(it, ItemTag and ItemTag.SEWING_NEEDLE)
+            local other = pick(items, used, function(i)
+                local t = i:getType()
+                if isNeedle then return (t == "Thread" or hasTag(i, ItemTag and ItemTag.THREAD)) and 0 or nil end
+                return (t == "Needle" or hasTag(i, ItemTag and ItemTag.SEWING_NEEDLE)) and 0 or nil
+            end)
+            if not other then return nil end
+            local needle, thread = it, other
+            if not isNeedle then needle, thread = other, it end
+            bring(needle, thread)
+            action = ISStitch:new(p, p, thread, bp, true)
+        end
+    elseif stepId == "bandage" then
+        local bandage = C.stepItem(items, "bandage", prefer)
+        if not bandage then return nil end
+        bring(bandage)
+        action = ISApplyBandage:new(p, p, bandage, bp, true)
+    elseif stepId == "splint" then
+        local splint = C.stepItem(items, "splint", prefer)
+        if splint then
+            bring(splint)
+            action = ISSplint:new(p, p, nil, splint, bp, true)
+        else
+            local used = {}
+            local plank = pick(items, used, function(i) return SPLINT_PLANKS[i:getType()] and 0 or nil end)
+            local sheet = plank and pick(items, used, function(i) return i:getType() == "RippedSheets" and 0 or nil end)
+            if not (plank and sheet) then return nil end
+            bring(sheet, plank)
+            action = ISSplint:new(p, p, sheet, plank, bp, true)
+        end
+    end
+    if not action then return nil end
+    ISTimedActionQueue.add(action)
+    C.dropKitCache(p)
+    return action
+end
+
+--- A done step the game can take back (the author 2026-11-11: a click on a done step's tile
+--- undoes it - the bandage, the stitches or the splint comes off, as the game's own menu does).
+function C.undoable(bp, stepId)
+    if stepId == "bandage" then return bp:bandaged() end
+    if stepId == "stitch" then return bp:stitched() end
+    if stepId == "splint" then return bp:getSplintFactor() > 0 end
+    return false
+end
+
+--- Queues the undo of a done step (the game's own actions); returns it (nil: nothing to undo).
+function C.undoStep(player, bp, stepId)
+    if not C.undoable(bp, stepId) then return nil end
+    local p = player
+    local action
+    if stepId == "bandage" then action = ISApplyBandage:new(p, p, nil, bp, false)
+    elseif stepId == "stitch" then action = ISStitch:new(p, p, nil, bp, false)
+    elseif stepId == "splint" then action = ISSplint:new(p, p, nil, nil, bp, false) end
+    if not action then return nil end
+    ISTimedActionQueue.add(action)
+    C.dropKitCache(p)
+    return action
+end
+
+--- Takes a pill or smokes (the kit's double click): the game's own ways.
+function C.take(player, item)
+    local n = player:getPlayerNum()
+    local t = item:getType() or ""
+    if string.find(t, "Cigar") and ISInventoryPaneContextMenu.eatItem then
+        ISInventoryPaneContextMenu.eatItem(item, 1, n)
+    else
+        ISInventoryPaneContextMenu.takePill(item, n)
+    end
     C.dropKitCache(player)
-    return true
 end
 
 return KnoxHealthCare

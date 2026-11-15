@@ -172,10 +172,10 @@ end
 H.note = note
 
 local function txt(key, a)
-    local s = getTextOrNull and getTextOrNull(key)
-    if not s then return nil end
-    if a then s = string.gsub(s, "%%1", (string.gsub(a, "%%", "%%%%"))) end
-    return s
+    -- (2026-11-11: the game fills %1 itself; asked without the argument it warned in the log
+    -- and handed back "%1$s", so the message read "4$s")
+    if not (getTextOrNull and getTextOrNull(key, a or "")) then return nil end
+    return a and getText(key, a) or getText(key)
 end
 
 -- Windows open again -------------------------------------------------------------------------

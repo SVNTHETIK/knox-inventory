@@ -1,0 +1,252 @@
+# The health tab's words (the mockup 3, the author 2026-11-10) into the translations EN / RU / CN:
+# python -I tools/health/hp_words.py  - adds the keys missing, puts the values below in place of
+# the ones there (the files keep their order and their other keys).
+import io, os, re, json
+
+here = os.path.dirname(os.path.abspath(__file__))
+TR = os.path.join(here, '..', '..', '42', 'media', 'lua', 'shared', 'Translate')
+
+# key: (EN, RU, CN)
+W = {
+    # the panels
+    'Organism': ('Body', 'Организм', '身体'),
+    'WhoDay': ('%1 · day %2', '%1 · день %2', '%1 · 第 %2 天'),
+    'OfHundred': ('/ 100', '/ 100', '/ 100'),
+    'Pulse': ('Pulse', 'Пульс', '脉搏'),
+    'TrendWorse': ('Getting worse', 'Ухудшается', '正在恶化'),
+    'TrendBleed': ('%1 an hour while it bleeds', '%1 в час, пока идёт кровь', '流血时每小时 %1'),
+    'TrendSlow': ('Slowly getting worse', 'Медленно ухудшается', '缓慢恶化'),
+    'TrendInfect': ('infection', 'заражение', '感染'),
+    'TrendBetter': ('On the mend', 'Идёт на поправку', '正在好转'),
+    'TrendClosed': ('the wounds are closed', 'раны закрыты', '伤口已处理'),
+    'TrendOpen': ('wounds left open', 'есть открытые раны', '有未处理的伤口'),
+    'TrendFine': ('Healthy', 'Здоров', '健康'),
+    'TrendNoWounds': ('no wounds', 'ран нет', '没有伤口'),
+    'LossAll': ('Lost %1. In colour: how much each wound took', 'Потеряно %1. Цветное: какая рана сколько отняла', '已损失 %1。彩色：每处伤口带走了多少'),
+    'LossNone': ('Nothing lost', 'Ничего не потеряно', '没有损失'),
+    'LossPart': ('took %1 of %2', 'отняло %1 из %2', '带走了 %2 中的 %1'),
+    'Level': ('level %1', 'уровень %1', '%1 级'),
+    'FirstAid': ('First aid', 'Первая помощь', '急救'),
+    'HoverPart': ('Point at a body part', 'Наведите на часть тела', '指向一个身体部位'),
+    'OnTable': ('On the table:', 'На столе:', '在桌上：'),
+    'OneWound': ('One wound', 'Одна рана', '一处伤口'),
+    'NWounds': ('%1 wounds', 'Ран: %1', '%1 处伤口'),
+    'DepthIs': ('depth: %1', 'глубина: %1', '深度：%1'),
+    'PartHp': ('Body part', 'Часть тела', '身体部位'),
+    'ToTable': ('to the table', 'на стол', '放上桌'),
+    'QuickShort': ('quick treatment', 'быстрое лечение', '快速治疗'),
+    'AllWounds': ('All wounds', 'Все раны', '所有伤口'),
+    'DepthLine': ('Depth: %1.', 'Глубина: %1.', '深度：%1。'),
+    'HealLine': ('Heals: %1.', 'Заживёт: %1.', '愈合：%1。'),
+    'HealIn': ('Heals in %1.', 'Заживёт через %1.', '%1 后愈合。'),
+    'HealClosed': ('The wound is closed. Heals: %1.', 'Рана закрыта. Заживёт: %1.', '伤口已处理。愈合：%1。'),
+    'HealUnknown': ('not while it is open', 'не заживёт, пока открыта', '敞开时不会愈合'),
+    'BtnAll': ('All actions', 'Все действия', '所有操作'),
+    'BtnNothing': ('Nothing left to treat', 'Лечить больше нечего', '没有需要治疗的了'),
+    'QuickAll': ('All you need is here: the steps go in order.', 'Всё нужное есть: сделает шаги по порядку.', '所需物品齐全：按顺序完成各步骤。'),
+    'QuickGames': ('The steps go one after another, each with its mini-game.', 'Шаги пойдут подряд, каждый со своей мини-игрой.', '各步骤依次进行，每步都有小游戏。'),
+    'QuickSome': ('Will do %1 of %2: nothing for the rest.', 'Сделает %1 из %2: на остальное нет вещей.', '将完成 %2 步中的 %1 步：其余缺少物品。'),
+    'QuickNone': ('Nothing to treat it with.', 'Нет нужных вещей.', '没有所需物品。'),
+    'Step_clean': ('Clean', 'Промыть', '清洗'),
+    'StepDone_clean': ('Cleaned', 'Промыто', '已清洗'),
+    'Step_stitch': ('Stitch', 'Зашить', '缝合'),
+    'StepDone_stitch': ('Stitched', 'Зашито', '已缝合'),
+    'Step_bandage': ('Bandage', 'Перевязать', '包扎'),
+    'StepDone_bandage': ('Bandaged', 'Перевязано', '已包扎'),
+    'Step_unb': ('Take off bandage', 'Снять бинт', '拆除绷带'),
+    'StepDone_unb': ('Bandage off', 'Бинт снят', '绷带已拆'),
+    'Step_tw': ('Pull out glass', 'Достать стекло', '取出玻璃'),
+    'StepDone_tw': ('Glass out', 'Стекло вынуто', '玻璃已取出'),
+    'Step_bullet': ('Pull out bullet', 'Достать пулю', '取出子弹'),
+    'StepDone_bullet': ('Bullet out', 'Пуля вынута', '子弹已取出'),
+    'Step_burn': ('Clean the burn', 'Промыть ожог', '清理烧伤'),
+    'StepDone_burn': ('Burn cleaned', 'Ожог промыт', '烧伤已清理'),
+    'Step_splint': ('Splint', 'Наложить шину', '上夹板'),
+    'StepDone_splint': ('In a splint', 'В шине', '已上夹板'),
+    'StepReady': ('done', 'готово', '完成'),
+    'StepHands': ('by hand', 'руками', '徒手'),
+    'StepNone': ('nothing for it', 'нет нужного', '缺少物品'),
+    'StepPlaying': ('mini-game on', 'идёт мини-игра', '小游戏进行中'),
+    'StepDoing': ('doing it', 'делает', '进行中'),
+    'ListNote': ('the most urgent on top · a click puts it on the table', 'самое срочное сверху · щелчок кладёт на стол', '最紧急的在上 · 点击放上桌'),
+    'Next': ('Next:', 'Дальше:', '下一步：'),
+    'NothingToDo': ('Nothing to do', 'Ничего делать не нужно', '无需处理'),
+    'HaveIt': ('%1 at hand', '%1 есть', '有 %1'),
+    'ToTableGo': ('to the table ›', 'на стол ›', '放上桌 ›'),
+    'ListTitle': ('What matters now', 'Что важно сейчас', '当前要紧的'),
+    'CardNone': ('No injuries', 'Повреждений нет', '没有伤'),
+    'StepSkipped': ('passed over', 'пропущено', '已跳过'),
+    'NoWoundsTitle': ('No wounds', 'Ран нет', '没有伤口'),
+    'NoWoundsSub': ('Nothing to treat. Point at the body to see its parts.', 'Лечить нечего. Наведите на тело, чтобы посмотреть его части.', '没有需要治疗的。指向身体查看各部位。'),
+    'Tag_bleed': ('URGENT', 'СРОЧНО', '紧急'),
+    'Tag_infect': ('INFECTION', 'ЗАРАЖЕНИЕ', '感染'),
+    'Tag_fracture': ('FRACTURE', 'ПЕРЕЛОМ', '骨折'),
+    'Tag_splint': ('SPLINTED', 'В ШИНЕ', '已上夹板'),
+    'Tag_glass': ('GLASS', 'СТЕКЛО', '玻璃'),
+    'Tag_open': ('OPEN', 'ОТКРЫТА', '敞开'),
+    'Tag_heal': ('HEALING', 'ЗАЖИВАЕТ', '愈合中'),
+    'Lw_bleedStitched': ('stitched · oozing until bandaged', 'зашита · кровь сочится, пока нет бинта', '已缝合 · 包扎前仍在渗血'),
+    'Lw_bleed': ('heavy bleeding', 'сильное кровотечение', '大量出血'),
+    'Lw_cleaned': ('cleaned', 'промыта', '已清洗'),
+    'Lw_notCleaned': ('not treated', 'не обработана', '未处理'),
+    'Lw_dirtyBand': ('dirty bandage · the wound is infected', 'грязный бинт · рана заражена', '绷带脏了 · 伤口感染'),
+    'Lw_dirtyBandOnly': ('dirty bandage', 'грязный бинт', '绷带脏了'),
+    'Lw_infected': ('the wound is infected · open', 'рана заражена · открыта', '伤口感染 · 敞开'),
+    'Lw_glass': ('glass in the wound', 'стекло в ране', '伤口里有玻璃'),
+    'Lw_bullet': ('a bullet in the wound', 'пуля в ране', '伤口里有子弹'),
+    'Lw_burn': ('a burn to clean', 'ожог надо промыть', '烧伤需要清理'),
+    'Lw_stitched': ('stitched', 'зашита', '已缝合'),
+    'Lw_notBandaged': ('not bandaged', 'не перевязана', '未包扎'),
+    'Lw_healing': ('bandaged · healing', 'перевязано · заживает', '已包扎 · 愈合中'),
+    'Lw_healingOpen': ('healing by itself', 'заживает сама', '自行愈合中'),
+    'Lw_left': ('%1 left', 'осталось %1', '还剩 %1'),
+    'Lw_splinted': ('in a splint · knitting', 'в шине · срастается', '已上夹板 · 愈合中'),
+    'Lw_noSplint': ('no splint', 'без шины', '没有夹板'),
+    'W_deep': ('Deep wound', 'Глубокая рана', '深伤口'),
+    'W_lacer': ('Cut', 'Порез', '割伤'),
+    'W_scratch': ('Scratch', 'Царапина', '擦伤'),
+    'W_glass': ('Glass shards', 'Осколки стекла', '玻璃碎片'),
+    'W_fracture': ('Fracture', 'Перелом', '骨折'),
+    'W_bite': ('Bite', 'Укус', '咬伤'),
+    'W_bullet': ('Gunshot wound', 'Пулевое ранение', '枪伤'),
+    'W_burn': ('Burn', 'Ожог', '烧伤'),
+    'D_deep': ('to the muscle', 'до мышцы', '深及肌肉'),
+    'D_lacer': ('skin', 'кожа', '皮肤'),
+    'D_scratch': ('skin only', 'только кожа', '仅皮肤'),
+    'D_glass': ('in the skin', 'в коже', '在皮肤中'),
+    'D_fracture': ('the bone', 'кость', '骨头'),
+    'D_burn': ('skin', 'кожа', '皮肤'),
+    'D_bullet': ('to the muscle', 'до мышцы', '深及肌肉'),
+    'KitNote': ('all you carry: pockets, bags and what is inside them', 'всё, что есть при себе: карманы, сумки и то, что лежит внутри них', '随身携带的一切：口袋、包以及包里的东西'),
+    'G_wrap': ('Bandage', 'Перевязать', '包扎'),
+    'G_clean': ('Clean', 'Обработать', '消毒'),
+    'G_stitch': ('Stitch and pull out', 'Зашить и достать', '缝合与取出'),
+    'G_bone': ('Bones', 'Кости', '骨头'),
+    'G_pills': ('Pills and the rest', 'Таблетки и прочее', '药片及其他'),
+    'HowTitle': ('How to treat', 'Как лечить', '如何治疗'),
+    'HowText1': ('Point at a thing: what it helps lights up on the body.', 'Наведите на вещь: на теле засветится то, чему она поможет.', '指向物品：身体上会亮起它能治疗的部位。'),
+    'HowText2': ('A body part on the table: a click on the thing is enough.', 'Часть тела на столе: хватит щелчка по вещи.', '身体部位在桌上时：点击物品即可。'),
+    'HowText3': ('Pills: double-click to take.', 'Таблетки: двойной щелчок - принять.', '药片：双击服用。'),
+    'HowText4': ('The corner icon: which bag it is in.', 'Значок в углу: в какой сумке лежит вещь.', '角落图标：物品在哪个包里。'),
+    'InPockets': ('in your pockets', 'в карманах', '在口袋里'),
+    'InChain': ('in: %1', 'в: %1', '在：%1'),
+    'Take': ('Take it: double-click.', 'Принять: двойной щелчок.', '服用：双击。'),
+    'Helps': ('Helps: %1.', 'Поможет: %1.', '可治疗：%1。'),
+    'Later': ('(later)', '(позже)', '（稍后）'),
+    'NothingNow': ('Nothing to treat with it now.', 'Сейчас лечить этим нечего.', '现在没有可用它治疗的。'),
+    'Desc_Bandage': ('Stops the blood and keeps dirt out of the wound.', 'Останавливает кровь и закрывает рану от грязи.', '止血并防止伤口沾上污物。'),
+    'Desc_Rag': ('Does for a bandage. Gets dirty sooner; the wound under it gets inflamed more often.', 'Заменит бинт. Пачкается быстрее, рана под ней воспаляется чаще.', '可代替绷带。更容易脏，伤口更易发炎。'),
+    'Desc_Bandaid': ('For scratches and small cuts.', 'Для царапин и мелких порезов.', '用于擦伤和小割伤。'),
+    'Desc_Disinfect': ('Cleans the wound: less chance of infection. It will hurt.', 'Промыть рану: меньше шанс заражения. Будет больно.', '清洗伤口：降低感染几率。会疼。'),
+    'Desc_SutureNeedle': ('Stitches a deep wound. Cleaner and less painful than a plain needle.', 'Зашить глубокую рану. Чище и не так больно, как обычной иглой.', '缝合深伤口。比普通针更干净、更不疼。'),
+    'Desc_Needle': ('Stitches a deep wound (with thread). It hurts.', 'Зашить глубокую рану (с ниткой). Больно.', '缝合深伤口（需配线）。会疼。'),
+    'Desc_Thread': ('Thread for a needle: stitches a deep wound.', 'Нитка для иглы: зашить глубокую рану.', '针用的线：缝合深伤口。'),
+    'Desc_Tweezers': ('Pulls out glass shards or a bullet.', 'Достать осколки стекла или пулю.', '取出玻璃碎片或子弹。'),
+    'Desc_Splint': ('Sets a fracture: the bone knits faster, you can walk.', 'Зафиксировать перелом: кость срастается быстрее, можно ходить.', '固定骨折：骨头愈合更快，可以行走。'),
+    'Desc_Painkillers': ('Takes the pain away for a few hours.', 'Снимает боль на несколько часов.', '缓解疼痛数小时。'),
+    'Desc_Antibiotics': ('Help against a wound infection.', 'Помогают справиться с заражением раны.', '帮助对抗伤口感染。'),
+    'Desc_Beta': ('Ease panic and stress.', 'Снимают панику и стресс.', '缓解恐慌和压力。'),
+    'Desc_Smoke': ('Calms the character down, if a smoker.', 'Успокаивают, если персонаж курит.', '如果角色吸烟，可以使其平静。'),
+    'Desc_Poultice': ('A herbal poultice: helps the wound heal.', 'Травяная примочка: помогает ране заживать.', '草药敷剂：帮助伤口愈合。'),
+    'Desc_Pills': ('Pills.', 'Таблетки.', '药片。'),
+    'Desc_Other': ('Medicine.', 'Медикаменты.', '药品。'),
+    'HintTable': ('put on the table', 'положить на стол', '放上桌'),
+    'HintActions': ('actions', 'действия', '操作'),
+    'KeyRmbDrag': ('RMB + drag', 'ПКМ + тянуть', '右键 + 拖动'),
+    'HintRotate': ('turn', 'повернуть', '旋转'),
+    'KeyEsc': ('Esc', 'Esc', 'Esc'),
+    'HintCancel': ('stop', 'отмена', '取消'),
+    # the mini-games
+    'GameReady': ('Done', 'Готово', '完成度'),
+    'GameTime': ('Time', 'Время', '时间'),
+    'GameTimeOf': ('%1 s of %2', '%1 с из %2', '%1 秒 / %2'),
+    'GameSlips': ('slips: %1', 'заминок: %1', '失误：%1'),
+    'GameIdle': ("don't want to play: wait, the character finishes it · Esc to stop", 'не хотите играть: подождите, персонаж доделает сам · Esc отмена', '不想玩：稍等，角色会自己完成 · Esc 取消'),
+    'GameIdleMp': ('in a game with others the character keeps its own pace · Esc to stop', 'в игре с другими персонаж идёт в своём темпе · Esc отмена', '多人游戏中角色按自己的节奏进行 · Esc 取消'),
+    'ShakeYes': ('Hands shaking: %1', 'Руки дрожат: %1', '手在发抖：%1'),
+    'ShakeNo': ('Steady hands', 'Руки не дрожат', '手很稳'),
+    'FirstAidLvl': ('first aid %1', 'первая помощь %1', '急救 %1'),
+    'HowClean': ('Hold and wipe the dirt off the edges. Keep out of the wound itself', 'Зажмите и сотрите грязь с краёв. В саму рану не лезьте', '按住并擦掉边缘的污物。不要碰伤口本身'),
+    'HowStitch': ('Pull the thread across the wound: from the light dot to its pair', 'Тяните нить через рану: от светлой точки к парной', '把线拉过伤口：从亮点拉到对应的点'),
+    'HowBandage': ('Drag the pad onto the wound and press it', 'Перетащите салфетку на рану и прижмите', '把纱布垫拖到伤口上并按住'),
+    'HowBandage1': ('Pull the roll down across the arm. Each new turn a third over the last', 'Тяните рулон вниз поперёк руки. Новый виток - на треть поверх прошлого', '把绷带卷向下拉过手臂。每一圈盖住上一圈的三分之一'),
+    'HowBandage2': ('Tie the end: pull it to the light circles', 'Завяжите конец: тяните его к светлым кругам', '系好末端：把它拉到亮圈处'),
+    'HowUnb': ('Pull the bandage by its edge. Slowly where it has dried on', 'Тяните бинт за край. Где присохло, тяните медленно', '拉住绷带边缘。粘住的地方慢慢拉'),
+    'HowTw': ('Grip a shard and pull it straight along itself', 'Зажмите осколок и тяните ровно вдоль него', '夹住碎片，沿着它笔直拉出'),
+    'HowSplint': ('Grip the broken bone and set it in place', 'Зажмите обломок кости и поставьте его на место', '夹住断骨并复位'),
+    'HowSplint2': ('Tighten the straps: hold and let go in the green', 'Затяните ремни: держите и отпустите в зелёной зоне', '收紧绑带：按住并在绿色区域松开'),
+    # the picture's words (KnoxWoundArt / KnoxWoundGame)
+    'ArtSwell': ('SWELLING', 'ОТЁК', '肿胀'),
+    'ArtXray': ('X-RAY', 'РЕНТГЕН', 'X光'),
+    'ArtDepth': ('DEPTH', 'ГЛУБИНА', '深度'),
+    'ArtSkin': ('SKIN', 'КОЖА', '皮肤'),
+    'ArtMuscle': ('MUSCLE', 'МЫШЦА', '肌肉'),
+    'ArtBone': ('BONE', 'КОСТЬ', '骨头'),
+    'NoteSplint': ('SPLINT', 'ШИНА', '夹板'),
+    'NoteShifted': ('BROKEN ENDS SHIFTED', 'ОБЛОМКИ СМЕЩЕНЫ', '断端移位'),
+    'NoteSwell': ('SWELLING', 'ОТЁК', '肿胀'),
+    'NoteBoneOk': ('BONE IN PLACE', 'КОСТЬ НА МЕСТЕ', '骨头已复位'),
+    'NoteInfect': ('INFECTION', 'ЗАРАЖЕНИЕ', '感染'),
+    'NoteBlood': ('BLEEDING', 'КРОВЬ ИДЁТ', '正在流血'),
+    'NoteOoze': ('OOZING', 'КРОВЬ СОЧИТСЯ', '渗血'),
+    'NoteStitches': ('STITCHES', 'ШВЫ', '缝线'),
+    'NoteDirt': ('DIRT IN THE WOUND', 'ГРЯЗЬ В РАНЕ', '伤口有污物'),
+    'NoteWashed': ('CLEANED', 'ПРОМЫТА', '已清洗'),
+    'NoteBite': ('BITE', 'УКУС', '咬伤'),
+    'NoteHealing': ('CLOSING', 'ЗАТЯГИВАЕТСЯ', '正在愈合'),
+    'NoteGlass': ('GLASS', 'СТЕКЛО', '玻璃'),
+    'NoteBurn': ('BURN', 'ОЖОГ', '烧伤'),
+    'NoteBullet': ('BULLET', 'ПУЛЯ', '子弹'),
+    'NoteDirtyBand': ('DIRTY BANDAGE', 'ГРЯЗНЫЙ БИНТ', '脏绷带'),
+    'NoteBand': ('BANDAGE', 'БИНТ', '绷带'),
+    'GameStuck': ('DRIED ON', 'ПРИСОХЛО', '粘住了'),
+    'GamePain': ('OUCH', 'БОЛЬНО', '好痛'),
+    'GameThird': ('1/3', '1/3', '1/3'),
+    'GameGap': ('A GAP: THE TURN SLID OFF, LAY IT AGAIN', 'ЩЕЛЬ: ВИТОК СПОЛЗ, ПОЛОЖИТЕ ЗАНОВО', '有缝隙：这一圈滑落了，重新缠'),
+    'GameOver': ('TOO MUCH OVERLAP: AN EXTRA TURN', 'МНОГО НАХЛЁСТА: УЙДЁТ ЛИШНИЙ ВИТОК', '重叠太多：会多用一圈'),
+    'GameEven': ('EVEN', 'РОВНО', '平整'),
+    'GameAuto': ('FINISHED AT ITS OWN PACE', 'ДОДЕЛАНО В ОБЫЧНОМ ТЕМПЕ', '以正常速度完成'),
+    'GameSelf': ('the character finished it', 'персонаж закончил сам', '角色自己完成了'),
+    'GameDoneIn': ('DONE IN %1 S', 'ГОТОВО ЗА %1 С', '%1 秒完成'),
+    'GameFaster': ('normal time %1 s · %2 times faster', 'обычное время %1 с · в %2 раза быстрее', '正常时间 %1 秒 · 快了 %2 倍'),
+    'Decimal': ('.', ',', '.'),
+}
+# the setting of the mini-games (KnoxTheme T.SWITCHES "health.games")
+SW = {
+    'IGUI_Knox_Switch_health.games': ('Treatment mini-games', 'Мини-игры лечения', '治疗小游戏'),
+    'IGUI_Knox_Switch_health.games_Info': ('Every treatment in the Health tab is a short game on the wound: played well it is done sooner. Off: the character treats at its own pace.',
+                                           'Каждое лечение во вкладке «Здоровье» - короткая игра на ране: сыграли хорошо - готово раньше. Выключено: персонаж лечит в своём темпе.',
+                                           '“健康”页中的每次治疗都是伤口上的小游戏：玩得好就更快完成。关闭：角色按自己的节奏治疗。'),
+}
+
+
+def esc(s):
+    return json.dumps(s, ensure_ascii=False)[1:-1]
+
+
+def update(lang, idx):
+    path = os.path.join(TR, lang, 'IG_UI.json')
+    raw = io.open(path, encoding='utf-8-sig').read()
+    want = {('IGUI_KnoxHP_' + k): v[idx] for k, v in W.items()}
+    want.update({k: v[idx] for k, v in SW.items()})
+    done = set()
+    def put(m):
+        k = m.group(1)
+        if k in want:
+            done.add(k)
+            return '"%s": "%s"' % (k, esc(want[k]))
+        return m.group(0)
+    raw = re.sub(r'"([A-Za-z0-9_.]+)":\s*"((?:[^"\\]|\\.)*)"', put, raw)
+    add = [k for k in want if k not in done]
+    if add:
+        end = raw.rstrip().rfind('}')
+        body = raw[:end].rstrip()
+        body += ',\n' + ',\n'.join('    "%s": "%s"' % (k, esc(want[k])) for k in add) + '\n}\n'
+        raw = body
+    json.loads(raw)   # (still JSON)
+    io.open(path, 'w', encoding='utf-8', newline='\n').write(raw)
+    print(lang, 'updated', len(done), 'added', len(add))
+
+
+for i, lang in enumerate(['EN', 'RU', 'CN']):
+    update(lang, i)

@@ -22,6 +22,19 @@ KnoxGrid.MAX_H = 15          -- rows of a bag's grid and of the floor's at most
 KnoxGrid.WORLD_MAX_H = 40    -- of a piece of furniture's or a car boot's (its grid scrolls)
 KnoxGrid.worldCols = 8       -- columns of the widest such grid: what the surroundings column shows (set by it, 8 to 12)
 
+-- No limit (the author 2026-11-15, PROMPT_FREE_GRID.md, mockup free_grid.html Z1/G1/K1/S1): the
+-- player's own switch. Every grid is one plain grid (no compartments) as wide as it is, and it
+-- grows down with the things: a thing put under the last row makes it longer, only the game's
+-- weight limits and "what may go in here" stand. Under the things there are always ZONE empty
+-- rows (drawn hatched: "put it here - the bag grows"); the grid is never shorter than its own size.
+KnoxGrid.ZONE = 2
+
+--- Is the grid without a limit of cells (the switch "grid.free")? (On a server: never - it
+--- doesn't lay grids out; the places are the client's.)
+function KnoxGrid.free()
+    return KnoxTheme ~= nil and KnoxTheme.switch ~= nil and KnoxTheme.switch("grid.free") == true
+end
+
 -- Pockets: the character's own grid is what the clothes worn right now have
 -- pockets for, plus what bare hands and a waistband hold. By body location
 -- (KnoxFootprint.norm); a location not named here has none.
@@ -152,6 +165,7 @@ end
 --- one drawn cell by cell, "grid CxR" takes it away).
 function KnoxGrid.shapeOf(container, player)
     if not KnoxBagShapes or (player and container == player:getInventory()) then return nil end
+    if KnoxGrid.free() then return nil end   -- (no limit: one plain grid, no compartments - the author 2026-11-15)
     local item = container:getContainingItem()
     if not item then return nil end
     local ft = item:getFullType()
@@ -177,8 +191,13 @@ end
 --- @return number cols, number rows, number|nil limit
 -- (a container that says its own size: the live grid of a news post, KnoxNewsLive, the author 2026-11-05)
 KnoxGrid.fixedSize = {}
+-- (a container of a news post that is a grid without limit whatever the switch says: its width
+-- and least rows - the live backpack of update 12, KnoxNewsLive, the author 2026-11-15)
+KnoxGrid.freeSize = {}
 
 function KnoxGrid.getSize(container, player)
+    local fs = KnoxGrid.freeSize[container]
+    if fs then return fs.cols, fs.rows end
     local fixed = KnoxGrid.fixedSize[container]
     if fixed then return fixed.cols, fixed.rows end
     local shape = KnoxGrid.shapeOf(container, player)
@@ -187,6 +206,8 @@ function KnoxGrid.getSize(container, player)
         local cells = KnoxGrid.pocketCells(player)
         local cols = KnoxGrid.POCKETS_COLS
         local rows = math.ceil(cells / cols)
+        -- (no limit: whole rows - the pockets grow like any grid)
+        if KnoxGrid.free() then return cols, rows end
         return cols, rows, (cells < cols * rows) and cells or nil
     end
     local item = container:getContainingItem()
@@ -428,6 +449,20 @@ function KnoxGrid.steppedBag(container, w, h, used, total)
     return footprintOf(cells, aspect, w, h)
 end
 
+--- No limit (KnoxGrid.free): the tile of a bag by the weight in it, smoothly - empty (or
+--- nearly) its own w x h, full by weight as big as its grid (the author 2026-11-15, mockup S1).
+function KnoxGrid.weightedBag(container, w, h)
+    local cap = container:getCapacity() or 0
+    if cap <= 0 then return w, h end
+    local frac = math.min(1, math.max(0, (container:getCapacityWeight() or 0) / cap))
+    local total = KnoxGrid.totalCells(container, nil)
+    local cells = math.floor(w * h + (total - w * h) * frac + 0.5)
+    if cells <= w * h then return w, h end
+    local cols, rows = KnoxGrid.getSize(container, nil)
+    local aspect = math.max(cols, rows) / math.max(1, math.min(cols, rows))
+    return footprintOf(cells, aspect, w, h)
+end
+
 local grown = {}       -- item ID -> {sig, w, h, bw, bh, waits}
 local grownN = 0
 
@@ -450,11 +485,23 @@ function KnoxGrid.bagFootprint(item, w, h)
     -- (they are already as big outside as they hold - KnoxFootprint.byRules; the
     -- author, 2026-10-19: a key ring with keys grew to 1x4)
     if (inv:getCapacity() or 0) <= KnoxFootprint.NEST_CAPACITY then return w, h end
+    -- (a toolbox, a first aid kit, a case: hard, they don't swell - the author 2026-11-14)
+    if KnoxFootprint.isRigid(item:getFullType()) then return w, h end
     local id = item:getID()
     -- (w x h too: the sizes may change while the game runs - the server's, KnoxNet)
     local sig = count .. "|" .. tostring(inv:getCapacityWeight()) .. "|" .. tostring(KnoxFootprint.gridScale()) .. "|" .. w .. "x" .. h
+    -- (no limit: by its weight, not its cells - no grid to wait for)
+    local free = KnoxGrid.free()
+    if free then sig = "f|" .. sig end
     local c = grown[id]
     if c and c.sig == sig then return c.w, c.h end
+    if free then
+        local gw, gh = KnoxGrid.weightedBag(inv, w, h)
+        if grownN > 4000 then grown, grownN = {}, 0 end
+        if not c then grownN = grownN + 1 end
+        grown[id] = {sig = sig, w = gw, h = gh, bw = w, bh = h}
+        return gw, gh
+    end
     -- (the detailed counter: how often a bag is counted anew and what it costs - the
     -- grids' long builds with 500 bullets moved, 2026-10-29)
     local Pf = KnoxPerf
@@ -492,6 +539,7 @@ local nestCache = {}
 --- a bag lying in a grid grows with what is put into it - refused when it would
 --- no longer fit there (at its place or any other free one).
 function KnoxGrid.nestRefusal(item, dest, player)
+    if KnoxGrid.free() then return nil end   -- (no limit: the grid around it grows with it)
     local holder = dest:getContainingItem()
     if not holder then return nil end                       -- pockets, a shelf, a trunk, the floor
     local outer = holder:getContainer()
@@ -502,6 +550,7 @@ function KnoxGrid.nestRefusal(item, dest, player)
     if c.item == item and c.dest == dest and now - c.ms < 300 then return c.why end
     local inv = holder:getInventory()
     if not inv or (inv:getCapacity() or 0) <= KnoxFootprint.NEST_CAPACITY then return nil end   -- an organizer doesn't grow
+    if KnoxFootprint.isRigid(holder:getFullType()) then return nil end   -- (nor a hard box)
     local Pf = KnoxPerf
     local pt = Pf and Pf.detail and Pf.now()   -- (the detailed counter, 2026-10-29)
     local w0, h0 = KnoxFootprint.get(holder)
@@ -1104,6 +1153,16 @@ local function equippedOn(item, player, hand1, hand2)
     return slot ~= nil and slot > -1
 end
 
+--- Is `container` on the character: its inventory, or (deep) in it? A news post's pretend
+--- character (a Lua table, KnoxNewsLive) has only its inventory - the game's own question takes
+--- a real one and threw (the author's error window, 2026-11-15).
+function KnoxGrid.onCharacter(container, player)
+    if not container or not player then return false end
+    if container == player:getInventory() then return true end
+    if type(player) == "table" then return false end
+    return container:isInCharacterInventory(player) == true
+end
+
 --- Worn, in a hand or on the hotbar right now.
 function KnoxGrid.isEquippedNow(item, player)
     if not player then return false end
@@ -1197,7 +1256,8 @@ end
 --- `overHeld`: a place held for its thing (KnoxHome's silhouette) counts as free - a drag may
 --- cover it (the author 2026-11-08), the thing then goes back as near to it as it can.
 function Layout:fits(x, y, w, h, ignore, overHeld)
-    if x < 0 or y < 0 or x + w > self.cols or y + h > self.rows then return false end
+    -- (no limit: no bottom - a block under the last row makes the grid longer)
+    if x < 0 or y < 0 or x + w > self.cols or (y + h > self.rows and not self.free) then return false end
     if self.limit then
         -- the grid's cells run row by row: the block is inside when the last of
         -- its cells in the grid proper is (the overflow rows under it are whole)
@@ -1241,12 +1301,30 @@ function Layout:occupy(entity, x, y, r)
         end
     end
     table.insert(self.placed, entity)
+    if self.free then
+        -- (how many cells of each row are taken: Layout:findFree starts under the full rows)
+        local fill = self.fill
+        for yy = y, y + h - 1 do fill[yy] = (fill[yy] or 0) + w end
+    end
+    -- no limit: the grid reaches its things' bottom (never above its own size), its zone under them
+    if self.free and y + h > self.bottom then
+        self.bottom = y + h
+        local rows = math.max(self.minRows, self.bottom) + KnoxGrid.ZONE
+        if rows > self.rows then self.rows, self.baseRows = rows, rows end
+    end
+end
+
+--- The rows a w x h block is looked for in: the grid proper; with no limit, down to
+--- where the block lies under all the things (there it always fits).
+function Layout:scanRows(h)
+    local rows = self.baseRows or self.rows
+    if self.free then return math.max(rows, self.bottom + h) end
+    return rows
 end
 
 --- First free spot scanning rows top to bottom, upright before rotated; only
 --- in the grid proper unless `anyRow` (the overflow rows under it too).
 function Layout:findFree(entity, ignore, anyRow)
-    local rows = anyRow and self.rows or (self.baseRows or self.rows)
     if self.shape then
         -- a bag with compartments: the biggest first (the main room), each upright
         -- before turned, then the next
@@ -1267,7 +1345,17 @@ function Layout:findFree(entity, ignore, anyRow)
     for _, r in ipairs({0, 1}) do
         local w, h = KnoxGrid.dims(entity, r)
         if r == 0 or w ~= h then
-            for y = 0, rows - h do
+            local rows = anyRow and math.max(self.rows, self:scanRows(h)) or self:scanRows(h)
+            -- (no limit: from the first row with a free cell - a block's top row must have one.
+            -- A floor of 400 things never placed took ~156 ms to lay out from the top each time,
+            -- tools/freegrid timed 2026-11-15; Tetris ~28. Not with `ignore`: its cells count as free.)
+            local y0 = 0
+            if self.free and not ignore then
+                y0 = self.top
+                while (self.fill[y0] or 0) >= self.cols do y0 = y0 + 1 end
+                self.top = y0
+            end
+            for y = y0, rows - h do
                 for x = 0, self.cols - w do
                     if self:fits(x, y, w, h, ignore) then return x, y, r end
                 end
@@ -1279,7 +1367,7 @@ end
 
 --- A free spot picked at random in the grid proper, either way up (nil: none).
 function Layout:findRandom(entity)
-    local rows = self.baseRows or self.rows
+    local rows = self.free and self.minRows or (self.baseRows or self.rows)
     local spots = {}
     for _, r in ipairs({0, 1}) do
         local w, h = KnoxGrid.dims(entity, r)
@@ -1321,8 +1409,12 @@ function Layout:vacate(entity)
     local w, h = KnoxGrid.dims(entity, entity.r)
     for yy = entity.y, entity.y + h - 1 do
         for xx = entity.x, entity.x + w - 1 do
-            if self.cells[yy * self.cols + xx + 1] == entity then self.cells[yy * self.cols + xx + 1] = nil end
+            if self.cells[yy * self.cols + xx + 1] == entity then
+                self.cells[yy * self.cols + xx + 1] = nil
+                if self.free then self.fill[yy] = (self.fill[yy] or 1) - 1 end
+            end
         end
+        if self.free and yy < self.top then self.top = yy end
     end
     for i = #self.placed, 1, -1 do
         if self.placed[i] == entity then table.remove(self.placed, i) break end
@@ -1564,6 +1656,11 @@ function KnoxGrid.build(container, player, dry, mayWait)
         shape = KnoxGrid.shapeOf(container, player), cells = {}, placed = {}, overflow = {},
         frame = KnoxGrid.frame,
     }, Layout)
+    -- (no limit; not a grid that says its own size - a news post's)
+    if (KnoxGrid.free() and not KnoxGrid.fixedSize[container]) or KnoxGrid.freeSize[container] then
+        layout.free, layout.minRows, layout.bottom, layout.fill, layout.top = true, rows, 0, {}, 0
+        layout.rows, layout.baseRows = rows + KnoxGrid.ZONE, rows + KnoxGrid.ZONE
+    end
     local outerWait = waitIn
     waitIn = (mayWait and not dry) and layout or nil
     if pt then pt = Pf.part("part: grid build 0 size, shape", pt) end
@@ -1649,7 +1746,7 @@ function KnoxGrid.build(container, player, dry, mayWait)
         for _, hd in ipairs(holds) do
             local e = {item = hd.item, items = {hd.item}, w = hd.w, h = hd.h, reserved = true, held = true}
             local dw, dh = KnoxGrid.dims(e, hd.r)
-            if hd.y + dh <= layout.baseRows and layout:fits(hd.x, hd.y, dw, dh) then layout:occupy(e, hd.x, hd.y, hd.r) end
+            if (layout.free or hd.y + dh <= layout.baseRows) and layout:fits(hd.x, hd.y, dw, dh) then layout:occupy(e, hd.x, hd.y, hd.r) end
         end
     end
 
@@ -1715,7 +1812,7 @@ function KnoxGrid.build(container, player, dry, mayWait)
         if #loot > 0 then
             local need, free = 0, 0
             for _, e in ipairs(loot) do need = need + e.w * e.h end
-            for y = 0, layout.baseRows - 1 do
+            for y = 0, (layout.minRows or layout.baseRows) - 1 do
                 for x = 0, cols - 1 do
                     if not layout.cells[y * cols + x + 1] and not layout:blocked(x, y) then free = free + 1 end
                 end
@@ -1814,6 +1911,7 @@ end
 --- with compartments: its main room and the cells of the rest, "5x6+12".
 function KnoxGrid.sizeText(L)
     local base = L.baseRows or L.rows
+    if L.free then base = math.max(L.minRows, L.bottom) end   -- (no limit: as long as it is, without the zone)
     if L.shape then
         local m = L.shape.main
         -- (a main room of any form, drawn cell by cell: the bag's cells in all)
@@ -1828,6 +1926,12 @@ end
 
 --- An empty layout of the same grid (for repacking it).
 function KnoxGrid.emptyLike(L)
+    if L.free then
+        local rows = L.minRows + KnoxGrid.ZONE
+        return setmetatable({container = L.container, key = L.key, cols = L.cols, rows = rows, baseRows = rows,
+                             free = true, minRows = L.minRows, bottom = 0, fill = {}, top = 0,
+                             cells = {}, placed = {}, overflow = {}}, Layout)
+    end
     return setmetatable({container = L.container, key = L.key, cols = L.cols, rows = L.baseRows or L.rows,
                          baseRows = L.baseRows or L.rows, limit = L.limit, shape = L.shape,
                          cells = {}, placed = {}, overflow = {}}, Layout)

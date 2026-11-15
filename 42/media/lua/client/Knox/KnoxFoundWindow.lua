@@ -373,17 +373,21 @@ local function drawTile(ui, e, r, hover, a)
     -- being moved: faded, with the move's progress over it (as the grids show it)
     if e.ghost then a = a * 0.4 end
     local picked = not e.ghost and KnoxSelect.isSelected(e)
-    T.rect(ui, r[1], r[2], r[3], r[4], T.category[T.categoryOf(item)], a)
+    -- (the category's glow, as on the grids' tiles - it stayed flat here, the author 2026-11-14)
+    T.tileFill(ui, r[1], r[2], r[3], r[4], 1, T.category[T.categoryOf(item)], a)
     local c = T.color.accent
     -- (every tile here has a sand frame - it was found; a picked one is lit
     -- and framed in white over it)
     ui:drawRect(r[1], r[2], r[3], r[4], (picked and 0.22 or 0.08) * a, c.r, c.g, c.b)
     if hover then ui:drawRect(r[1], r[2], r[3], r[4], 0.06 * a, 1, 1, 1) end
     local side = math.floor(math.min(r[3], r[4]) * 0.85)
-    ISInventoryItem.renderItemIcon(ui, item, r[1] + math.floor((r[3] - side) / 2), r[2] + math.floor((r[4] - side) / 2), a, side, side)
-    T.tileFrame(ui, r[1], r[2], r[3], r[4], (hover or picked) and T.color.bright or c, a)
+    -- (a stack: the picture a little up over its count's plate - the author 2026-11-13)
+    local up = #e.items > 1 and T.countLift() or 0
+    ISInventoryItem.renderItemIcon(ui, item, r[1] + math.floor((r[3] - side) / 2), r[2] + math.floor((r[4] - side) / 2) - up, a, side, side)
+    local fc = (hover or picked) and T.color.bright or c
+    T.tileFrame(ui, r[1], r[2], r[3], r[4], fc, a)
     if #e.items > 1 then
-        T.outlinedRight(ui, tostring(#e.items), r[1] + r[3] - 4, r[2] + r[4] - T.fontTileH - 3, T.color.bright, T.fontTile, a)
+        T.tileCount(ui, r[1], r[2], r[3], r[4], tostring(#e.items), nil, T.color.bright, fc, a)
     end
     if e.ghost then
         local _, p = KnoxGrid.pendingOf(e.item)
@@ -704,7 +708,7 @@ function W:onMouseUp(x, y)
             if page and page.inventoryPane then page.inventoryPane:doContextualDblClick(p.e.item) end
         end
     elseif act == "inspect" then
-        KnoxInspectWindow.open(p.e.item, self.playerNum)
+        KnoxInspectWindow.openFor(p.e.item, self.playerNum)
     end
     return true
 end

@@ -401,13 +401,17 @@ local function meter(ui, right, y, frac, text, c, n, st, key)
     end
     return x
 end
+KnoxInventoryPanel.meter = meter   -- (the news post's live backpack, KnoxNewsLive: the same cubes - 2026-11-15)
 
 local function meters(ui, s, L, player, right, y, n)
     s.meterSt = s.meterSt or {}
     local wt, cap = L.container:getCapacityWeight(), L.container:getEffectiveCapacity(player)
     local frac = cap > 0 and wt / cap or 0
     local c = frac > 1 and T.color.bad or (frac >= 0.8 and T.color.warn or T.color.good)
-    local x = meter(ui, right, y, frac, round1(wt) .. "/" .. round1(cap) .. " " .. getText("IGUI_Knox_Kg"), c, n, s.meterSt, "w") - 12
+    local x = meter(ui, right, y, frac, round1(wt) .. "/" .. round1(cap) .. " " .. getText("IGUI_Knox_Kg"), c, n, s.meterSt, "w")
+    -- no limit (KnoxGrid.free): the weight alone - the cells have no end to count to (the author 2026-11-15)
+    if L.free then return x end
+    x = x - 12
     local total = math.max(1, totalCells(L))
     local used = s.cellsUsed or 0
     return meter(ui, x, y, used / total, used .. "/" .. total, T.color.accent, n, s.meterSt, "c")
@@ -518,6 +522,15 @@ function KnoxInventoryPanel:prerender()
         if KnoxLootPanel and KnoxLootPanel.drawIcon then
             KnoxLootPanel.drawIcon(self, sr, "sort", sHover and T.color.accent or T.color.text)
         end
+        -- Compact (no limit only: KnoxOrder.compact), left of Sort
+        local cr = self:compactRect(s)
+        if cr then
+            local cHover = self:isMouseOver() and T.inRect(self:getMouseX(), self:getMouseY(), cr)
+            T.border(self, cr[1], cr[2], cr[3], cr[4], cHover and T.color.accent or T.color.tileEdge)
+            if KnoxLootPanel and KnoxLootPanel.drawIcon then
+                KnoxLootPanel.drawIcon(self, cr, "compact", cHover and T.color.accent or T.color.text)
+            end
+        end
         local er = self:eyeRect(s)
         if er then
             local eHover = self:isMouseOver() and T.inRect(self:getMouseX(), self:getMouseY(), er)
@@ -525,7 +538,7 @@ function KnoxInventoryPanel:prerender()
             KnoxOrder.drawEye(self, er, eHover and T.color.accent or T.color.text, KnoxOrder.ghostK())
         end
         local ty = sy + math.floor((T.sectionH - ft) / 2)
-        local infoRight = (er or sr)[1] - 6
+        local infoRight = (er or cr or sr)[1] - 6
         if not searching then
             infoRight = drawMeters(self, s, L, player, infoRight, sy) - (info and 10 or 0)
         end
@@ -561,7 +574,18 @@ function KnoxInventoryPanel:sortRect(s)
     return {b[1] - b[3] - 4, b[2], b[3], b[4]}
 end
 
---- The eye (the layout's silhouettes shown or hidden) left of Sort, or nil
+--- The Compact button (KnoxOrder.compact) left of Sort - only with no limit (KnoxGrid.free),
+--- else nil. (Kept on the section: asked every frame.)
+function KnoxInventoryPanel:compactRect(s)
+    if not (s.view.layout and s.view.layout.free) then return nil end
+    local b = self:collapseRect(s)
+    local r = s.compactR or {}
+    s.compactR = r
+    r[1], r[2], r[3], r[4] = b[1] - (b[3] + 4) * 2, b[2], b[3], b[4]
+    return r
+end
+
+--- The eye (the layout's silhouettes shown or hidden) left of Sort (of Compact), or nil
 --- when the container has no layout.
 function KnoxInventoryPanel:eyeRect(s)
     -- (whether there is a layout, asked of the container's holder a few times a
@@ -572,7 +596,7 @@ function KnoxInventoryPanel:eyeRect(s)
         s.hasLayout = KnoxOrder.layoutOf(s.view.container) ~= nil
     end
     if not s.hasLayout then return nil end
-    local b = self:sortRect(s)
+    local b = self:compactRect(s) or self:sortRect(s)
     return {b[1] - b[3] - 4, b[2], b[3], b[4]}
 end
 
@@ -603,6 +627,12 @@ function KnoxInventoryPanel:onMouseDown(x, y)
     if s and T.inRect(x, y, self:sortRect(s)) then
         self.press = nil
         KnoxOrder.sort(s.view)
+        return true
+    end
+    local cr = s and self:compactRect(s)
+    if cr and T.inRect(x, y, cr) then
+        self.press = nil
+        KnoxOrder.compact(s.view)
         return true
     end
     local er = s and self:eyeRect(s)

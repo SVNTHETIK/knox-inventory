@@ -89,7 +89,7 @@ function KnoxQuickSlot:accepts(item)
     -- from the body only out of a hand (the game's attach takes it out of the
     -- hand first); worn things stay where they are
     local e = KnoxDrag.entity
-    if e.fromBody and e.slotId ~= "hand1" and e.slotId ~= "hand2" then return false end
+    if e.fromBody and e.slotId ~= "hand1" and e.slotId ~= "hand2" and e.slotId ~= "hands" then return false end
     return item ~= self:item() and hb:canBeAttached(slot, item)
 end
 
@@ -148,6 +148,9 @@ function KnoxQuickSlot:render()
     local alpha = 1
     local leaving, progress = KnoxGrid.leavingSlot(self.screen.pendingNow or {}, "quick:" .. self.index)
     if leaving then item, alpha = leaving, 0.4 end
+    -- being dragged out: faded, as a tile in a bag (the author 2026-11-14)
+    local dragged = not leaving and item ~= nil and KnoxDrag.entity ~= nil and KnoxDrag.entity.item == item
+    if dragged then alpha = 0.3 end
     local cat, dy, da, level = false, 0, 1, nil
     if item then
         cat = T.category[T.categoryOf(item)]
@@ -159,6 +162,9 @@ function KnoxQuickSlot:render()
     -- (from the ready list while the slot is not under the mouse: the key is all it
     -- shows - the item, its place, how it comes in, its colour, its number, its state,
     -- a window about it)
+    -- an empty slot: the faint picture of what goes there, as the hotbar shows it (the author 2026-11-14)
+    local slot = not item and self:slot()
+    local hint = slot and slot.texture or nil
     local L
     if not over then
         L = self.readyList
@@ -167,8 +173,8 @@ function KnoxQuickSlot:render()
             L = quickLists[key] or T.newList()
             quickLists[key], self.readyList = L, L
         end
-        local flags = (leaving and 1 or 0) + (windowOpen and 2 or 0)
-        if T.listDraw(self, L, item or false, w * 10000 + h, flags, dy, da, cat, self.pos or self.index, T.levelKey(item, h, level)) then L = false end
+        local flags = (leaving and 1 or 0) + (windowOpen and 2 or 0) + (dragged and 4 or 0)
+        if T.listDraw(self, L, item or hint or false, w * 10000 + h, flags, dy, da, cat, self.pos or self.index, T.levelKey(item, h, level)) then L = false end
     end
     if L ~= false then
         T.rect(self, 0, 0, w, h, T.color.cell, T.slotAlpha())
@@ -176,6 +182,9 @@ function KnoxQuickSlot:render()
             T.tileFill(self, 0, 0, w, h, level, cat, alpha)
             local side = math.floor(math.min(w, h) * 0.66)
             T.itemIcon(self, item, math.floor((w - side) / 2), math.floor((h - side) / 2) + dy, side, alpha * da)
+        elseif hint then
+            local side = math.floor(math.min(w, h) * 0.5)
+            self:drawTextureScaledAspect(hint, math.floor((w - side) / 2), math.floor((h - side) / 2), side, side, 0.2, 1, 1, 1)
         end
         if self.label then
             T.text(self, T.fit(T.upper(self.label), T.fontTile, w - 8), 5, 2, T.color.dim, T.fontTile, item and 1 or 0.8)
@@ -184,7 +193,9 @@ function KnoxQuickSlot:render()
         end
         local edge = item and T.color.tileFrame or T.color.tileEdge
         if KnoxDrag.isActive() and over then
-            local c = self:accepts(KnoxDrag.entity.item) and T.color.ok or T.color.bad
+            local ok = self:accepts(KnoxDrag.entity.item)
+                or (#KnoxDrag.extras == 0 and KnoxDrag.partFits(KnoxDrag.entity.item, item, self.screen:player()))
+            local c = ok and T.color.ok or T.color.bad
             self:drawRect(0, 0, w, h, 0.22, c.r, c.g, c.b)
             edge = c
         elseif over then
@@ -196,6 +207,12 @@ function KnoxQuickSlot:render()
         if item and not leaving then T.tileFrame(self, 0, 0, w, h, edge) else T.border(self, 0, 0, w, h, edge) end
         if leaving then T.border(self, 1, 1, w - 2, h - 2, T.color.tileFrame, alpha) end   -- (the fill stops 2 px in)
         if L then T.listEnd(L) end
+    end
+    -- a slot moved with Alt: dark where it was, a sand frame where it would go (as on the hotbar)
+    local mv = KnoxQuickSlot.moving
+    if mv and mv.moved then
+        if mv.slot == self then self:drawRect(0, 0, w, h, 0.55, 0, 0, 0)
+        elseif over and self.pos then T.tileFrame(self, -2, -2, w + 4, h + 4, T.color.accent) end
     end
     if item and not leaving and KnoxEquip.isReplaced({item}) then T.replaceMark(self, 0, 0, w, h) end
     if item and not leaving and KnoxContextMenu and KnoxContextMenu.isTarget(item) then
@@ -209,7 +226,7 @@ function KnoxQuickSlot:render()
         T.target(self, 0, 0, w, h)
     end
 
-    if over and not KnoxDrag.isActive() then
+    if over and not KnoxDrag.isActive() and not KnoxQuickSlot.moving then
         if item and not leaving then
             -- a gun here: what fits it lit up, its panel above or below (KnoxLoad, 2026-10-30)
             -- - with the quick items' key held; then no tooltip of its own over the panel's cells
@@ -219,7 +236,7 @@ function KnoxQuickSlot:render()
         else
             -- how many carried items can hang here; when some can, the quick pick
             -- panel opens: under the back slot, above the hotbar row
-            local slot = self:slot()
+            slot = self:slot()
             local name = slot and (getTextOrNull("IGUI_HotbarAttachment_" .. slot.slotType) or slot.name) or ""
             local cands = self:candidates()
             KnoxEquip.drawAvailable(self, w, h, #cands, self.label == nil)
@@ -262,12 +279,61 @@ function KnoxQuickSlot:liveItem()
     return item
 end
 
+-- Moving a quick slot to another place with the slot-moving key held (Alt unless set otherwise),
+-- as on Knox's hotbar (the author 2026-11-14): only how they are shown changes (KnoxHotbarOrder).
+local MOVE_PX = 6
+KnoxQuickSlot.moving = nil   -- {slot, index, x, y, moved}
+
+local function canMove(self)
+    return self.pos ~= nil and not self.defName and KnoxHotbarOrder ~= nil and T.on("hotbar")
+        and KnoxControls.isHeld("hotbarMove") and not KnoxDrag.isActive()
+end
+
+--- The slot being moved, at the mouse (drawn on the drag layer, over everything); off with the button.
+function KnoxQuickSlot.drawMove(ui)
+    local mv = KnoxQuickSlot.moving
+    if not mv then return end
+    if not isMouseButtonDown(0) or not mv.slot.screen:isVisible() then
+        KnoxQuickSlot.moving = nil
+        return
+    end
+    if not mv.moved then return end
+    local size = mv.slot:getWidth()
+    local x = math.floor(getMouseX() - ui:getAbsoluteX() - size / 2)
+    local y = math.floor(getMouseY() - ui:getAbsoluteY() - size / 2)
+    local hb = mv.slot:hotbar()
+    local item = hb and hb.attachedItems[mv.index]
+    if item then
+        T.dragTile(ui, item, x, y, size, size, nil, 0.9)
+        local side = math.floor(size * 0.66)
+        T.itemIcon(ui, item, x + math.floor((size - side) / 2), y + math.floor((size - side) / 2), side, 1)
+    else
+        T.rect(ui, x, y, size, size, T.color.cell, 0.9)
+        local slot = hb and hb.availableSlot[mv.index]
+        if slot and slot.texture then
+            local side = math.floor(size * 0.5)
+            ui:drawTextureScaledAspect(slot.texture, x + math.floor((size - side) / 2), y + math.floor((size - side) / 2), side, side, 0.2, 1, 1, 1)
+        end
+    end
+    T.tileFrame(ui, x, y, size, size, T.color.accent)
+end
+
 function KnoxQuickSlot:onMouseDown(x, y)
+    if canMove(self) then
+        KnoxQuickSlot.moving = {slot = self, index = self.index, x = getMouseX(), y = getMouseY()}
+        self.press = nil
+        return true
+    end
     self.press = {item = self:liveItem(), x = getMouseX(), y = getMouseY()}
     return true
 end
 
 function KnoxQuickSlot:onMouseMove(dx, dy)
+    local mv = KnoxQuickSlot.moving
+    if mv and mv.slot == self and not mv.moved
+            and math.abs(getMouseX() - mv.x) + math.abs(getMouseY() - mv.y) >= MOVE_PX then
+        mv.moved = true
+    end
     local p = self.press
     if p and p.item and not KnoxDrag.isActive() and isMouseButtonDown(0) then
         if math.abs(getMouseX() - p.x) + math.abs(getMouseY() - p.y) >= DRAG_START_PX then
@@ -287,8 +353,26 @@ end
 
 function KnoxQuickSlot:onMouseUp(x, y)
     local hb, slot = self:hotbar(), self:slot()
+    local mv = KnoxQuickSlot.moving
+    if mv then
+        -- a slot let go on another: shown there from now on (a press without a move: nothing)
+        KnoxQuickSlot.moving = nil
+        if mv.moved and hb and self.pos and self.pos ~= mv.slot.pos then
+            KnoxHotbarOrder.move(hb, mv.index, self.pos)
+            getSoundManager():playUISound("UIActivateButton")
+        end
+        return true
+    end
     if KnoxDrag.isActive() then
         local item = KnoxDrag.entity.item
+        -- a part onto the gun in this slot: it goes on the gun, at once (the author 2026-11-14)
+        local gun = self:item()
+        local player = self.screen:player()
+        if #KnoxDrag.extras == 0 and KnoxDrag.partFits(item, gun, player) then
+            KnoxDrag.cancel()
+            KnoxDrag.attachPart(player, gun, item)
+            return true
+        end
         local ok = self:accepts(item)
         local from = fromQuick()
         local source = KnoxDrag.sourceInfo()
@@ -1082,7 +1166,9 @@ function KnoxScreen:prerender()
     -- (the quick slots on the left: the hints leave room for them)
     local lastQ = self.quickSlots[#self.quickSlots]
     local quickRight = lastQ and (lastQ:getX() + lastQ:getWidth()) or -1
-    if not T.listDraw(self, L.hints, coin[1] * 10000 + botY, coinKey, KnoxControls.stamp, quickRight, W) then
+    -- (the Health tab has its own hints: its stamp in the key, or the bar kept the inventory's - 2026-11-10)
+    local hintStamp = (self.tab == "Health" and self.health) and self.health:hintsStamp() or KnoxControls.stamp
+    if not T.listDraw(self, L.hints, coin[1] * 10000 + botY, coinKey, hintStamp, quickRight, W) then
         self:drawCoin(coin, self.coinHot)
         -- the key hints: 24 px left of the coin
         self:drawHints(coin[1] - math.floor(24 * s + 0.5), botY + math.floor(self.botH / 2))
@@ -1151,10 +1237,13 @@ end
 
 --- Key hints right-aligned at `right`, centred on `midY`: [R] повернуть ...
 function KnoxScreen:drawHints(right, midY)
-    -- (written from the controls as they are bound now)
-    if not self.hints or self.hintsStamp ~= KnoxControls.stamp then
-        self.hints = KnoxControls.hints()
-        self.hintsStamp = KnoxControls.stamp
+    -- (written from the controls as they are bound now; the Health tab's own mouse - its
+    -- mockup health_v3, 2026-11-10)
+    local health = self.tab == "Health" and self.health or nil
+    local stamp = health and health:hintsStamp() or KnoxControls.stamp
+    if not self.hints or self.hintsStamp ~= stamp then
+        self.hints = health and health:hints() or KnoxControls.hints()
+        self.hintsStamp = stamp
     end
     local gap = math.floor(T.cell * 0.45)
     local kh = T.fontH(T.fontTile) + 4
@@ -1642,6 +1731,8 @@ function KnoxScreen:onKeyRelease(key)
         KnoxSplitDialog.instance:close()
         return
     end
+    -- the Health tab: a step being played stops, a part on the table goes off it (2026-11-10)
+    if self.tab == "Health" and self.health and self.health:getIsVisible() and self.health:escape() then return end
     -- then the search: Esc empties the field (being typed in or not); the next one closes
     if self.searchBox and (self:searchFocused() or (self.searchBox:getText() or "") ~= "") then
         self:clearSearch()

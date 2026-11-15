@@ -385,10 +385,16 @@ end
 
 -- Own music left playing when the driver gets out (the author, 2026-10-21: "as the
 -- radio goes on"): it goes on from the car, quieter with the distance - silent past
--- the range zombies hear it at, though it goes on however far (the author,
+-- four times the range zombies hear it at (2026-11-14), though it goes on however far (the author,
 -- 2026-10-21: it must not stop when walked away from) - and stops for good when
 -- the set goes off or loses power, or in another car.
 local OUTSIDE_VOL = 0.85
+-- (heard by the player much farther than zombies hear it: the author 2026-11-14 - "гораздо
+-- дальше"; the zombies' range stays the set's)
+local OUTSIDE_FAR = 4
+-- (the loudness falls by the square of what is left of the range: the author 2026-11-14 -
+-- walking up to the car changed it too little; the muffling still goes by the plain share)
+local OUTSIDE_CURVE = 2
 
 local function outsideGain(pl, v)
     local d = data()
@@ -396,7 +402,7 @@ local function outsideGain(pl, v)
     local range = 5 + d:getBaseVolumeRange() * MM.vol()
     local dx, dy = pl:getX() - v:getX(), pl:getY() - v:getY()
     local dist = math.sqrt(dx * dx + dy * dy) + math.abs(pl:getZ() - v:getZ()) * 3
-    return math.max(0, 1 - dist / math.max(1, range))
+    return math.max(0, 1 - dist / math.max(1, range * OUTSIDE_FAR))
 end
 
 function R.goOutside()
@@ -482,9 +488,9 @@ local function parkedTick()
         P.lookAt = t + 200
         local dx, dy = pl:getX() - v:getX(), pl:getY() - v:getY()
         local dist = math.sqrt(dx * dx + dy * dy) + math.abs(pl:getZ() - v:getZ()) * 3
-        local gain = math.max(0, 1 - dist / math.max(1, P.range))
+        local gain = math.max(0, 1 - dist / math.max(1, P.range * OUTSIDE_FAR))
         local open = openness(v)
-        knoxMusicParkedVolume(P.base * gain * (0.55 + 0.45 * open) * OUTSIDE_VOL)
+        knoxMusicParkedVolume(P.base * gain ^ OUTSIDE_CURVE * (0.55 + 0.45 * open) * OUTSIDE_VOL)
         knoxMusicParkedMuffle(1 - gain, open)
     end
     -- zombies hear it as they hear the set
@@ -525,7 +531,7 @@ local function tick()
             local open = R.open or 0
             -- a shut car is quieter too: through glass and steel; and from outside a
             -- little quieter in all (the author, 2026-10-21: "just a bit quieter")
-            local vol = gain * (0.55 + 0.45 * open) * OUTSIDE_VOL
+            local vol = gain ^ OUTSIDE_CURVE * (0.55 + 0.45 * open) * OUTSIDE_VOL
             if math.abs(vol - (MM.carFar or 1)) > 0.01 or open ~= R.openSaid then
                 MM.carFar = vol
                 R.openSaid = open

@@ -1710,11 +1710,140 @@ end
 
 -- (all the earlier points taken off by the author, 2026-11-07: "it is all cluttered";
 -- their marks are kept in Zomboid/Lua/knox_testbench_beta16.txt; the home_* points passed
--- on 2026-11-09 are kept in knox_testbench_home.txt, the ones passed 2026-11-10 in knox_testbench_1110.txt)
+-- on 2026-11-09 are kept in knox_testbench_home.txt, the ones passed 2026-11-10 in knox_testbench_1110.txt,
+-- place_bag passed 2026-11-13 in knox_testbench_place.txt, the author's list of 2026-11-13
+-- passed the same day in knox_testbench_list1311.txt and knox_testbench_list1311b.txt;
+-- glass_red dropped: the game itself wants a thing in hand, the author kept it so;
+-- count_stack passed 2026-11-14, kept in knox_testbench_count1411.txt)
+-- Stacks for the count's plate (the author 2026-11-14): 12 nails alike, three keys to
+-- different doors (a stack of unlike things: its count in sand).
+local function giveStacks(p)
+    local inv = p:getInventory()
+    if exists("Base.Nails") then
+        for _ = 1, 12 do tag(inv:AddItem("Base.Nails")) end
+    end
+    if exists("Base.Key1") then
+        for i = 1, 3 do
+            local k = tag(inv:AddItem("Base.Key1"))
+            if k then pcall(function() k:setKeyId(7300 + i) end) end
+        end
+    end
+    dirtyAll()
+end
+
+-- The hotbar and the gun's parts (the author 2026-11-14). A thing hung on the hotbar at once:
+-- on a slot named `want` (Back) if it fits there, else on the first free one it fits.
+local function hangOn(p, item, want)
+    local hb = getPlayerHotbar(p:getPlayerNum())
+    local kind = item and item:getAttachmentType()
+    if not hb or not kind or not hb.availableSlot then return end
+    local pick
+    for i, slot in pairs(hb.availableSlot) do
+        if not hb.attachedItems[i] and slot.def.attachments[kind] and hb:canBeAttached(slot, item) then
+            if want and slot.def.name == want then pick = i break end
+            pick = pick or i
+        end
+    end
+    if not pick then return end
+    local slot = hb.availableSlot[pick]
+    hb:attachItem(item, slot.def.attachments[kind], pick, slot.def, false)
+end
+
+--- The hands and the back set (empties them first: what was there goes into the pockets).
+local function handsBack(p, inHands, onBack, onBelt)
+    if not B.bag(p) then B.prepare(p, p:getPlayerNum()) end
+    local hb = getPlayerHotbar(p:getPlayerNum())
+    if hb then
+        for i, it in pairs(hb.attachedItems) do
+            if hb.availableSlot[i] and hb.availableSlot[i].def.name == "Back" then hb:removeItem(it, false) end
+        end
+    end
+    local inv = p:getInventory()
+    p:setPrimaryHandItem(nil)
+    p:setSecondaryHandItem(nil)
+    if onBack and exists(onBack) then hangOn(p, tag(inv:AddItem(onBack)), "Back") end
+    if onBelt and exists(onBelt) then hangOn(p, tag(inv:AddItem(onBelt)), nil) end
+    if inHands and exists(inHands) then
+        local it = tag(inv:AddItem(inHands))
+        p:setPrimaryHandItem(it)
+        p:setSecondaryHandItem(it)
+    end
+    if hb then hb:reloadIcons() end
+    dirtyAll()
+end
+
+--- A pistol with a laser on it and a red dot beside, into the pockets.
+local function gunParts(p)
+    local inv = p:getInventory()
+    local gun = exists("Base.Pistol") and tag(inv:AddItem("Base.Pistol"))
+    if gun then pcall(function() gun:attachWeaponPart(instanceItem("Base.Laser"), true) end) end
+    if exists("Base.RedDot") then tag(inv:AddItem("Base.RedDot")) end
+    dirtyAll()
+end
+
+--- What the hands and the back hold now.
+local function checkHands(p)
+    local h = p:getPrimaryHandItem()
+    local hb = getPlayerHotbar(p:getPlayerNum())
+    local back = "-"
+    if hb then
+        for i, it in pairs(hb.attachedItems) do
+            if hb.availableSlot[i] and hb.availableSlot[i].def.name == "Back" then back = it:getDisplayName() end
+        end
+    end
+    return true, getText("IGUI_KnoxTB_Res_Hands", h and h:getDisplayName() or "-", back)
+end
+
+--- A shoulder holster worn and a double-barrel in both hands, shells in the pockets (the game's
+--- own bug in loading, KnoxReloadFix).
+local function holsterGun(p)
+    handsBack(p, "Base.DoubleBarrelShotgun", nil, nil)
+    local inv = p:getInventory()
+    if exists("Base.HolsterShoulder") then
+        local h = tag(inv:AddItem("Base.HolsterShoulder"))
+        if h then pcall(function() p:setWornItem(h:getBodyLocation(), h) end) end
+    end
+    if exists("Base.ShotgunShells") then
+        for _ = 1, 6 do tag(inv:AddItem("Base.ShotgunShells")) end
+    end
+    triggerEvent("OnClothingUpdated", p)
+    dirtyAll()
+end
+
+--- Boxes of rounds into the backpack: two of 9 mm, one of shells.
+local function ammoBoxes(p)
+    if not B.bag(p) then B.prepare(p, p:getPlayerNum()) end
+    local bag = B.bag(p)
+    local inv = bag and bag:getInventory() or p:getInventory()
+    for _, ft in ipairs({"Base.Bullets9mmBox", "Base.Bullets9mmBox", "Base.ShotgunShellsBox"}) do
+        if exists(ft) then tag(inv:AddItem(ft)) end
+    end
+    dirtyAll()
+end
+
+--- A rifle in both hands with an empty magazine in it, two empty magazines and 60 rounds in
+--- the backpack.
+local function rifleMags(p)
+    handsBack(p, "Base.AssaultRifle", nil, nil)
+    local gun = p:getPrimaryHandItem()
+    if gun then pcall(function() gun:setContainsClip(true) gun:setCurrentAmmoCount(0) end) end
+    local bag = B.bag(p)
+    local inv = bag and bag:getInventory() or p:getInventory()
+    for _ = 1, 2 do
+        local m = exists("Base.556Clip") and tag(inv:AddItem("Base.556Clip"))
+        if m then pcall(function() m:setCurrentAmmoCount(0) end) end
+    end
+    if exists("Base.556Bullets") then
+        for _ = 1, 60 do tag(inv:AddItem("Base.556Bullets")) end
+    end
+    dirtyAll()
+end
+
 B.POINTS = {
     -- (group: the report a point checks - a caption row above its points, the author 2026-11-09:
     -- "to see which report I am checking")
-    {id = "place_bag", group = "Place", actions = {{"ChairBag", function(p, n) placeInBag(p, n) end}}, check = checkPlace},
+    -- (all passed by the author 2026-11-14, marks in knox_testbench_1411.txt)
+    -- (all passed by the author 2026-11-15, marks in knox_testbench_1511.txt)
 }
 
 -- The report ----------------------------------------------------------------------
@@ -1817,6 +1946,9 @@ function B:stateOf(id)
 end
 
 function B:showNote()
+    -- (no points at all - every one passed and taken out: the window opens empty; it fell
+    -- on its first frame, the author 2026-11-14)
+    if not self:point() then return end
     local s = self:stateOf(self:point().id)
     self.note:setText(s.note or "")
     self.noteWas = s.note or ""
@@ -1868,7 +2000,7 @@ function B:prerender()
     local over = self:isMouseOver()
     -- the note: saved as it is typed
     local text = self.note:getText() or ""
-    if text ~= self.noteWas then
+    if text ~= self.noteWas and self:point() then
         self.noteWas = text
         self:stateOf(self:point().id).note = text
         B.save()
@@ -1886,7 +2018,7 @@ function B:prerender()
     end
 
     -- the list: a mark (green works, red broken, grey not yet), the number, the name
-    if self.sel ~= self.shownSel then
+    if self.sel ~= self.shownSel and self:point() then
         self.shownSel = self.sel
         self:scrollTo(self.sel)
         saveSel(self:point().id)
@@ -1936,6 +2068,10 @@ function B:prerender()
 
     -- the point: name, what to do, what should happen, its buttons, the check, the marks
     local p = self:point()
+    if not p then
+        self.btns, self.verdicts = nil, nil
+        return
+    end
     local s = self:stateOf(p.id)
     local x, y, pw = self.paneX, self.headerH + pad, self.paneW
     T.caps(self, getText("IGUI_KnoxTB_" .. p.id), x, y, T.color.accent)

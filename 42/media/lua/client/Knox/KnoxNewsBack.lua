@@ -105,6 +105,72 @@ do
     table.insert(SIGHT_IN, {0, 0.08, 0, 0.24})
 end
 
+-- The gear of "@back gear" in units (its middle at 0, 0; the teeth's tips at 1): the technical
+-- updates' gear (tech_banner), the rim with 14 teeth, the hub, three windows between the
+-- spokes; the axle's ring (GEAR_IN) brightens most. Turned as it is drawn (gearLines).
+local GEAR, GEAR_IN = {}, {}
+do
+    local n, ro, ri = 14, 1, 0.82
+    local rim = {}
+    local function at(r, a)
+        table.insert(rim, r * math.cos(a))
+        table.insert(rim, r * math.sin(a))
+    end
+    for i = 0, n - 1 do
+        local a0, s = i / n * 2 * math.pi, math.pi / n
+        at(ri, a0 - s * 0.5)
+        at(ro, a0 - s * 0.32)
+        at(ro, a0 + s * 0.32)
+        at(ri, a0 + s * 0.5)
+        at(ri, a0 + s * 1.5)
+    end
+    table.insert(rim, rim[1])
+    table.insert(rim, rim[2])
+    table.insert(GEAR, rim)
+    local function ring(list, r)
+        local l = {}
+        for i = 0, 48 do
+            local a = i / 48 * 2 * math.pi
+            table.insert(l, r * math.cos(a))
+            table.insert(l, r * math.sin(a))
+        end
+        table.insert(list, l)
+    end
+    ring(GEAR, 0.61)
+    ring(GEAR_IN, 0.2)
+    for i = 0, 2 do
+        local a0 = i * 2.094 + 0.3
+        local w = {}
+        for j = 0, 8 do
+            local a = a0 + 1.25 * j / 8
+            table.insert(w, 0.52 * math.cos(a))
+            table.insert(w, 0.52 * math.sin(a))
+        end
+        for j = 8, 0, -1 do
+            local a = a0 + 1.25 * j / 8
+            table.insert(w, 0.29 * math.cos(a))
+            table.insert(w, 0.29 * math.sin(a))
+        end
+        table.insert(w, w[1])
+        table.insert(w, w[2])
+        table.insert(GEAR, w)
+    end
+end
+
+--- `list` turned by cs, sn (the cosine and sine of its angle), k px a unit, its middle at
+--- cx, cy; ya, yb: only the strokes reaching into those rows (a fade strip's), nil: all.
+local function gearLines(ui, list, cx, cy, k, cs, sn, th, c, a, ya, yb)
+    for _, l in ipairs(list) do
+        for i = 1, #l - 3, 2 do
+            local x1, y1, x2, y2 = l[i], l[i + 1], l[i + 2], l[i + 3]
+            local ry1, ry2 = cy + (x1 * sn + y1 * cs) * k, cy + (x2 * sn + y2 * cs) * k
+            if not ya or ((ry1 >= ya - th or ry2 >= ya - th) and (ry1 <= yb + th or ry2 <= yb + th)) then
+                bar(ui, cx + (x1 * cs - y1 * sn) * k, ry1, cx + (x2 * cs - y2 * sn) * k, ry2, th, c, a)
+            end
+        end
+    end
+end
+
 local function lines(ui, list, cx, cy, k, th, c, a)
     for _, l in ipairs(list) do
         for i = 1, #l - 3, 2 do
@@ -141,7 +207,7 @@ function B.litFor(st, on, now, kind)
         v = math.max(0, v - dt / DOWN_MS)
     end
     st.v = v
-    if kind == "aim" then
+    if kind == "aim" or kind == "gear" then
         st.f = v
         return v
     end
@@ -627,6 +693,21 @@ local function sight(ui, x, y, w, h, c, lit, am, ya, yb)
     ui:drawRect(cx - d / 2, cy - d / 2, d, d, (0.1 + 0.6 * lit) * am, T.color.accent.r, T.color.accent.g, T.color.accent.b)
 end
 
+-- "@back gear" (update 12 "No limit", the author chose it from three in the mockup news_tech,
+-- 2026-11-15): the same grid and the technical updates' gear, big and faint at the lower right;
+-- while the post's live grids are used, the grid comes out, the gear brightens and turns slowly.
+-- Its angle steps in B.draw (once a frame); B.drawStrip draws it again only where a strip crosses it.
+local gear = {a = 0, at = nil, cs = 1, sn = 0}
+local GEAR_TURN = 0.00025   -- radians a millisecond, lit whole
+
+local function drawGear(ui, x, y, w, h, c, lit, am, ya, yb)
+    local k = h * 0.3 * 0.66
+    local cx, cy = x + w - h * 0.3 * 0.75, y + h - h * 0.3 * 0.55
+    local th = math.max(2, T.cell * 0.05)
+    gearLines(ui, GEAR, cx, cy, k, gear.cs, gear.sn, th, c, (0.07 + 0.13 * lit) * am, ya, yb)
+    gearLines(ui, GEAR_IN, cx, cy, k, gear.cs, gear.sn, th, c, (0.06 + 0.3 * lit) * am, ya, yb)
+end
+
 -- "@back blizzard": the snow of update 11 "Winter is coming" (the author chose it from the
 -- mockup .claude/mockups/news_bar, 2026-11-05): 300 streaks in a gusting wind, thinner down the
 -- column of text, a cold light from the lower left, snow drifting up in the lower corners. Its
@@ -743,6 +824,18 @@ function B.draw(ui, kind, x, y, w, h, c, lit)
         sight(ui, x, y, w, h, c, lit, 1)
         return
     end
+    if kind == "gear" then
+        local now = getTimestampMs()
+        local dt = math.max(0, math.min(100, now - (gear.at or now)))
+        gear.at = now
+        if lit > 0 then
+            gear.a = (gear.a + dt * GEAR_TURN * lit) % (2 * math.pi)
+            gear.cs, gear.sn = math.cos(gear.a), math.sin(gear.a)
+        end
+        B.grid(ui, x, y, w, h, c, lit, 1)
+        drawGear(ui, x, y, w, h, c, lit, 1)
+        return
+    end
     if kind ~= "power" then return end
     B.grid(ui, x, y, w, h, c, lit, 1)
     local k = h * 0.3
@@ -786,7 +879,7 @@ function B.drawStrip(ui, kind, x, y0, w, h0, c, lit, y, h, am)
         end
         return
     end
-    if (kind ~= "power" and kind ~= "aim") or am <= 0.003 then return end
+    if (kind ~= "power" and kind ~= "aim" and kind ~= "gear") or am <= 0.003 then return end
     local step = math.max(12, math.floor(T.cell / 2))
     local minor, major = (0.04 + 0.035 * lit) * am, (0.08 + 0.07 * lit) * am
     local i = 0
@@ -804,6 +897,13 @@ function B.drawStrip(ui, kind, x, y0, w, h0, c, lit, y, h, am)
         local k = h0 * 0.3
         local cy = y0 + h0 - k * 0.7
         if y + h > cy - 1.2 * k and y < cy + 1.2 * k then sight(ui, x, y0, w, h0, c, lit, am, y, y + h) end
+        return
+    end
+    if kind == "gear" then
+        -- (the gear only where the strip crosses it)
+        local k = h0 * 0.3 * 0.66
+        local cy = y0 + h0 - h0 * 0.3 * 0.55
+        if y + h > cy - 1.05 * k and y < cy + 1.05 * k then drawGear(ui, x, y0, w, h0, c, lit, am, y, y + h) end
         return
     end
     local k = h0 * 0.3
