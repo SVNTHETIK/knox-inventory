@@ -1,0 +1,10 @@
+[h1]Knox Inventory 1.0 BETA: a small fix[/h1]
+
+[b]New Java part: when ZombieBuddy asks about KnoxInventoryJava.jar, pick Yes / Allow.[/b]
+
+[h2]Viewpoint 0.1.7[/h2]
+[list]
+[*]Walk up to a container, press Tab, close the inventory - and the mouse cursor just stayed on the screen, so you had to switch it off yourself with the middle mouse button. Viewpoint 0.1.7 remembers whether the cursor was out before its inventory opened, and it saw Knox's window already holding it. Now closing the inventory takes you straight back to looking around, the way it used to.
+[/list]
+
+Join us on [url=https://discord.gg/HKpREqdDqD]Discord[/url].

@@ -225,6 +225,40 @@ public class KnoxViewpoint {
         }
     }
 
+    // Viewpoint 0.1.7 (release) keeps the cursor of its own inventory screen in FP.inventoryScreen:
+    // when the screen frees the cursor it notes whether the cursor was out before the screen, and
+    // on closing gives that back. Knox's screen opened through it (Tab at a container) had freed the
+    // cursor already, so "it was out before" - closed, the cursor stayed on the screen (the author
+    // 2026-11-16: "the cursor has to be turned off with the middle button"). For that one call
+    // Viewpoint sees the mode as it was before Knox's window; the window keeps its cursor after.
+    private static boolean vpScreenSwapped;
+
+    public static void vpScreenEnter() {
+        vpScreenSwapped = false;
+        if (!held || cursorMode == null) return;
+        vpScreenSwapped = true;
+        set(cursorMode, before);
+    }
+
+    public static void vpScreenExit() {
+        if (!vpScreenSwapped) return;
+        vpScreenSwapped = false;
+        if (held) set(cursorMode, true);
+    }
+
+    @Patch(className = "viewpoint.FP", methodName = "inventoryScreen")
+    public static class VpScreenCursor {
+        @Patch.OnEnter
+        public static void enter() {
+            KnoxViewpoint.vpScreenEnter();
+        }
+
+        @Patch.OnExit
+        public static void exit() {
+            KnoxViewpoint.vpScreenExit();
+        }
+    }
+
     // OldPoint (Workshop 3815999052, an overhead camera over Viewpoint) holds the
     // mouse for turning the camera while its key is held - the middle button,
     // Knox's inspect gesture: in a Knox window the cursor went and the camera

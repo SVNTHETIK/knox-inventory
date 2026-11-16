@@ -120,7 +120,8 @@ public class KnoxModels {
     /** Version of the Java part, for the Lua side to check it is loaded. */
     @LuaMethod(name = "knoxJavaVersion", global = true)
     public static String knoxJavaVersion() {
-        return "167";   // 167: KnoxViewpoint.take - the window key on a thing without containers dropped (Viewpoint 0.1.7 turned its loot menu off on it, the author 2026-11-16)
+        return "168";   // 168: KnoxViewpoint.VpScreenCursor - after Knox's screen opened by Tab the cursor goes back to looking (Viewpoint 0.1.7 kept it out, the author 2026-11-16)
+                        // 167: KnoxViewpoint.take - the window key on a thing without containers dropped (Viewpoint 0.1.7 turned its loot menu off on it, the author 2026-11-16)
                         // 166: KnoxViewpoint - the containers' titles from ContainerMarks (Viewpoint 0.1.7 release: Knox's crosshair panel was off, the author 2026-11-16)
                         // 165: knoxHatchStripes - stripes of a given period and width (the free grid's zone, the author 2026-11-15)
                         // 164: KnoxUiBetween (161-163) taken out - the author 2026-11-15: the game ran slower with it; its code kept in .claude/perf/uiframes
