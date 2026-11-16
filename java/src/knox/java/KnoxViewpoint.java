@@ -573,8 +573,16 @@ public class KnoxViewpoint {
                 }
                 kiSlot = method(ki, "slot", int.class);
                 kiMenu = method(ki, "menu", int.class);
-                title = method(rows, "title", ItemContainer.class);
-                groundTitle = method(rows, "groundTitle");
+                // (the containers' titles: LootRows up to 0.1.7-rc4, ContainerMarks in the 0.1.7
+                // release - its absence switched the whole panel off again, the author 2026-11-16)
+                try {
+                    title = method(rows, "title", ItemContainer.class);
+                    groundTitle = method(rows, "groundTitle");
+                } catch (NoSuchMethodException t) {
+                    Class<?> marks = Class.forName("viewpoint.interact.ContainerMarks", false, cl);
+                    title = method(marks, "title", ItemContainer.class);
+                    groundTitle = method(marks, "groundTitle");
+                }
                 bindTake = declared(keys, "LOOT_TAKE").get(null);
                 bindAll = declared(keys, "LOOT_TAKE_ALL").get(null);
                 // (the actions gathered anew and the nudge: without them the panel

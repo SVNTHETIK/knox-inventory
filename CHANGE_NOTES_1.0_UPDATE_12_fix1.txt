@@ -1,0 +1,11 @@
+[h1]Knox Inventory 1.0 BETA: a small fix[/h1]
+
+[b]New Java part: when ZombieBuddy asks about KnoxInventoryJava.jar, pick Yes / Allow.[/b]
+
+[h2]Viewpoint 0.1.7[/h2]
+[list]
+[*]Viewpoint 0.1.7 is finally out on Steam, and it moved a few things around inside. Because of that, Knox's own panel at the crosshair switched itself off and you got Viewpoint's panel instead. It's back now: look at a container in first person and you get Knox's panel again, with your keys and your choice of what to take.
+[*]Older Viewpoint versions work as before.
+[/list]
+
+Join us on [url=https://discord.gg/HKpREqdDqD]Discord[/url].
