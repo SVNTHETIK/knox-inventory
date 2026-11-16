@@ -1,0 +1,10 @@
+[h1]Knox Inventory 1.0 BETA: a small fix[/h1]
+
+[b]New Java part: when ZombieBuddy asks about KnoxInventoryJava.jar, pick Yes / Allow.[/b]
+
+[h2]Viewpoint 0.1.7[/h2]
+[list]
+[*]Sometimes the loot panel at the crosshair just vanished after a while of playing - both Knox's and Viewpoint's - and only came back after reloading the save. That was Viewpoint tripping over itself: press Tab at a container, look away at something with actions but nothing inside, and its loot menu switched itself off for the rest of the game. Knox now catches that moment, and the panel stays.
+[/list]
+
+Join us on [url=https://discord.gg/HKpREqdDqD]Discord[/url].

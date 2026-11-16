@@ -993,6 +993,22 @@ public class KnoxViewpoint {
 
     /** LootMenu.take: take / take all go to Knox (true: skip); the window key stays Viewpoint's. */
     public static boolean take() {
+        // (Viewpoint 0.1.7: the window key kept from a container while the look moved on to a
+        // thing with actions and no container - its take reads containers.get(0) of an empty
+        // list, and its loot menu, Knox's panel with it, is off till a reload. The key is
+        // dropped instead; the author 2026-11-16, console: IndexOutOfBounds in LootMenu.take)
+        try {
+            if (panel() && lmPending.getInt(null) == 3) {
+                Object t = target();
+                List<?> list = (List<?>) tContainers.get(t);
+                if (tKind.getInt(t) != 0 && (list == null || list.isEmpty())) {
+                    lmPending.setInt(null, 0);
+                    return true;
+                }
+            }
+        } catch (Throwable t) {
+            // (as Viewpoint does)
+        }
         if (!panelOwned) return false;
         try {
             int p = lmPending.getInt(null);
